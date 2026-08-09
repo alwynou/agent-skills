@@ -4,3 +4,5 @@ coverage/
 .DS_Store
 *.log
 
+# Machine-local symlink ownership state contains absolute paths.
+.skill-manager/managed-links.json

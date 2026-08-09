@@ -1,0 +1,6 @@
+[submodule "vendors/herdr"]
+	path = vendors/herdr
+	url = https://github.com/herdrdev/herdr.git
+[submodule "vendors/mattpocock"]
+	path = vendors/mattpocock
+	url = https://github.com/mattpocock/skills.git
