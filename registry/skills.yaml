@@ -13,15 +13,27 @@ skills:
     enabled: true
     agents:
       - codex
+      - claude
+      - kimi-code
+      - pi-agent
+      - opencode
   grill-me:
     source: mattpocock
     path: skills/productivity/grill-me
     enabled: true
     agents:
       - codex
+      - claude
+      - kimi-code
+      - pi-agent
+      - opencode
   grilling:
     source: mattpocock
     path: skills/productivity/grilling
     enabled: true
     agents:
       - codex
+      - claude
+      - kimi-code
+      - pi-agent
+      - opencode

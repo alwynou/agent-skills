@@ -1,6 +1,6 @@
 # Agent Skills Manager
 
-A small, conservative, CLI-first registry for keeping personal and third-party Agent Skills as one source of truth across Codex and Claude Code.
+A small, conservative, CLI-first registry for keeping personal and third-party Agent Skills as one source of truth across Codex, Claude Code, Kimi Code, Pi, and OpenCode.
 
 The core model is:
 
@@ -16,7 +16,7 @@ The manager preserves the standard `SKILL.md` layout. It does not copy skills in
 - Keep third-party Git sources in `vendors/`, preferably as submodules.
 - Pin reviewed vendor commits in `.skill-manager/lock.yaml`.
 - Declare enablement and agent targets in `registry/skills.yaml`.
-- Rebuild Codex and Claude Code installations deterministically.
+- Rebuild Codex, Claude Code, Kimi Code, Pi, and OpenCode installations deterministically.
 - Inspect upstream changes before updating executable skill content.
 
 See [the architecture decision](docs/architecture.md) for boundaries and safety invariants.
@@ -138,8 +138,11 @@ The built-in adapters use:
 | --- | --- |
 | Codex | `~/.agents/skills` |
 | Claude Code | `~/.claude/skills` |
+| Kimi Code | `~/.kimi-code/skills` |
+| Pi Coding Agent | `~/.pi/agent/skills` |
+| OpenCode | `~/.config/opencode/skills` |
 
-For safe experiments and automated tests, redirect both adapters:
+For safe experiments and automated tests, redirect all adapters:
 
 ```bash
 AGENT_SKILLS_HOME="$(mktemp -d)" npm run dev -- sync

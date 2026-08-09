@@ -31,7 +31,7 @@ async function fixture() {
     sourceId: "local",
     absolutePath: skillPath,
     enabled: true,
-    agents: ["codex", "claude"],
+    agents: ["codex", "claude", "kimi-code", "pi-agent", "opencode"],
   };
   return { root, home, skill, synchronizer };
 }
@@ -40,11 +40,20 @@ describe("synchronizer", () => {
   it("creates idempotent links in a temporary home", async () => {
     const { home, skill, synchronizer } = await fixture();
     const first = await synchronizer.sync([skill]);
-    expect(first.created).toHaveLength(2);
+    expect(first.created).toHaveLength(5);
     const second = await synchronizer.sync([skill]);
     expect(second.created).toHaveLength(0);
-    expect(second.unchanged).toHaveLength(2);
+    expect(second.unchanged).toHaveLength(5);
     expect(await fs.realpath(path.join(home, ".agents", "skills", "example"))).toBe(
+      await fs.realpath(skill.absolutePath),
+    );
+    expect(await fs.realpath(path.join(home, ".kimi-code", "skills", "example"))).toBe(
+      await fs.realpath(skill.absolutePath),
+    );
+    expect(await fs.realpath(path.join(home, ".pi", "agent", "skills", "example"))).toBe(
+      await fs.realpath(skill.absolutePath),
+    );
+    expect(await fs.realpath(path.join(home, ".config", "opencode", "skills", "example"))).toBe(
       await fs.realpath(skill.absolutePath),
     );
   });
@@ -64,7 +73,7 @@ describe("synchronizer", () => {
     await synchronizer.sync([skill]);
     const disabled = { ...skill, enabled: false };
     const result = await synchronizer.sync([disabled]);
-    expect(result.removed).toHaveLength(2);
+    expect(result.removed).toHaveLength(5);
     await expect(fs.lstat(path.join(home, ".agents", "skills", "example"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

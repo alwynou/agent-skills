@@ -14,7 +14,9 @@ describe("registry validation", () => {
       },
     });
     expect(registry.skills.local?.agents).toEqual(["*"]);
-    expect(resolveSkills(registry, projectPaths("/repo"))[1]?.absolutePath).toBe(
+    const resolved = resolveSkills(registry, projectPaths("/repo"));
+    expect(resolved[0]?.agents).toEqual(["codex", "claude", "kimi-code", "pi-agent", "opencode"]);
+    expect(resolved[1]?.absolutePath).toBe(
       path.join("/repo", "vendors", "upstream", "skills", "remote"),
     );
   });
@@ -34,5 +36,20 @@ describe("registry validation", () => {
         skills: { bad: { source: "local", path: "skills/bad", enabled: true, agents: ["mystery"] } },
       }),
     ).toThrow("unsupported agent");
+  });
+
+  it("accepts every built-in agent", () => {
+    const registry = validateRegistry({
+      sources: {},
+      skills: {
+        shared: {
+          source: "local",
+          path: "skills/shared",
+          enabled: true,
+          agents: ["codex", "claude", "kimi-code", "pi-agent", "opencode"],
+        },
+      },
+    });
+    expect(registry.skills.shared?.agents).toEqual(["codex", "claude", "kimi-code", "pi-agent", "opencode"]);
   });
 });

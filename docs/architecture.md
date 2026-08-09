@@ -6,7 +6,7 @@ Status: accepted for v0.1
 
 Agent Skills already have a portable unit: a directory containing `SKILL.md` plus optional scripts, references, and assets. This project should manage those units, not invent a competing skill format.
 
-Codex discovers user skills under `~/.agents/skills` and repository skills under `.agents/skills`; its official documentation explicitly supports symlinked skill directories. Claude Code discovers personal skills under `~/.claude/skills` and project skills under `.claude/skills`. Both use `SKILL.md` as the entry point.
+Codex discovers user skills under `~/.agents/skills` and repository skills under `.agents/skills`; its official documentation explicitly supports symlinked skill directories. Claude Code discovers personal skills under `~/.claude/skills` and project skills under `.claude/skills`. Kimi Code, Pi, and OpenCode have their own global skill directories and also support common Agent Skills locations. All supported agents use `SKILL.md` as the entry point.
 
 The Vercel `skills` CLI is useful for discovery and ad-hoc installation. Its update lock tracks installed skill origins and content hashes, but it is not a complete declaration that can always rebuild missing installations. This manager therefore owns the desired state while remaining compatible with standard Skill directories.
 

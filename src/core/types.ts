@@ -1,4 +1,4 @@
-export const agentIds = ["codex", "claude"] as const;
+export const agentIds = ["codex", "claude", "kimi-code", "pi-agent", "opencode"] as const;
 
 export type AgentId = (typeof agentIds)[number];
 
