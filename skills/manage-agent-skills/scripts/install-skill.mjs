@@ -6,45 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { resolveGitIdentity } from "./git-identity.mjs";
-
-function fail(message) {
-  throw new Error(message);
-}
-
-function run(command, args, cwd, options = {}) {
-  const result = spawnSync(command, args, { cwd, encoding: "utf8", stdio: options.capture ? "pipe" : "inherit" });
-  if (result.error) throw result.error;
-  if (result.status !== 0) fail(options.message ?? `${command} ${args[0] ?? ""} failed`);
-  return (result.stdout ?? "").trim();
-}
-
-function parseArgs(argv) {
-  const values = new Map();
-  for (let index = 0; index < argv.length; index += 2) {
-    const name = argv[index];
-    const value = argv[index + 1];
-    if (!name?.startsWith("--") || !value || value.startsWith("--")) fail(`invalid argument near ${name ?? "<end>"}`);
-    values.set(name, value);
-  }
-  for (const required of ["--skill", "--source-url", "--scope"]) if (!values.has(required)) fail(`${required} is required`);
-  const scope = values.get("--scope");
-  if (!["project", "agent-global", "all-global"].includes(scope)) fail("--scope must be project, agent-global, or all-global");
-  if (scope !== "all-global" && !values.has("--agent")) fail("--agent is required for project and agent-global scope");
-  return values;
-}
-
-function slug(value) {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-}
-
-function inferProjectId(cwd) {
-  const remote = spawnSync("git", ["-C", cwd, "config", "--get", "remote.origin.url"], { encoding: "utf8" });
-  if (remote.status === 0) {
-    const match = remote.stdout.trim().match(/(?:github\.com[:/])([^/]+)\/([^/]+?)(?:\.git)?$/i);
-    if (match) return slug(`${match[1]}-${match[2]}`);
-  }
-  return slug(path.basename(cwd));
-}
+import { fail, inferProjectId, parseArgs, run, slug } from "./install-helpers.mjs";
 
 function uniqueBranch(root, base) {
   const exists = spawnSync("git", ["-C", root, "show-ref", "--verify", "--quiet", `refs/heads/${base}`]).status === 0 ||
@@ -52,6 +14,14 @@ function uniqueBranch(root, base) {
   if (!exists) return base;
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "").replace("T", "-");
   return `${base}-${stamp}`;
+}
+
+function pathsChanged(root, from, to, paths) {
+  const result = spawnSync("git", ["-C", root, "diff", "--quiet", from, to, "--", ...paths]);
+  if (result.error) throw result.error;
+  if (result.status === 0) return false;
+  if (result.status === 1) return true;
+  fail(`git diff failed while comparing ${from} and ${to}`);
 }
 
 function cliArgs(values, cwd, dryRun) {
@@ -85,11 +55,21 @@ if (Number.parseInt(process.versions.node.split(".")[0] ?? "0", 10) < 20) fail("
 if (!fs.statSync(cwd).isDirectory()) fail(`working directory is not a directory: ${cwd}`);
 process.chdir(root);
 const tsx = path.join(root, "node_modules", ".bin", "tsx");
-if (!fs.existsSync(tsx)) run("npm", ["ci"], root);
 if (run("git", ["status", "--porcelain"], root, { capture: true }) !== "") fail("central agent-skills repository has uncommitted changes");
+const initialHead = run("git", ["rev-parse", "HEAD"], root, { capture: true });
 run("git", ["fetch", "origin"], root);
 run("git", ["switch", "main"], root);
 run("git", ["merge", "--ff-only", "origin/main"], root);
+const preparedHead = run("git", ["rev-parse", "HEAD"], root, { capture: true });
+const runtimePaths = ["skills/manage-agent-skills", "src", "bin", "package.json", "package-lock.json", "tsconfig.json"];
+if (initialHead !== preparedHead && pathsChanged(root, initialHead, preparedHead, runtimePaths)) {
+  if (!fs.existsSync(tsx) || pathsChanged(root, initialHead, preparedHead, ["package.json", "package-lock.json"])) {
+    run("npm", ["ci"], root);
+  }
+  run(process.execPath, [scriptPath, ...process.argv.slice(2)], root);
+  process.exit(0);
+}
+if (!fs.existsSync(tsx)) run("npm", ["ci"], root);
 
 const plan = readJson(run(tsx, cliArgs(values, cwd, true), root, { capture: true }));
 const title = `feat(skills): 添加 ${values.get("--skill")} skill (${values.get("--source-url")})`;
