@@ -1,8 +1,8 @@
 import path from "node:path";
 import YAML from "yaml";
-import { atomicWrite, type FsPort } from "../core/fs.js";
-import type { LockConfig, ManagedLinksFile, RegistryConfig } from "../core/types.js";
-import { validateLock, validateRegistry } from "./schema.js";
+import { atomicWrite, pathExists, type FsPort } from "../core/fs.js";
+import type { LockConfig, ManagedLinksFile, ProjectBindingsConfig, RegistryConfig } from "../core/types.js";
+import { validateLock, validateProjectBindings, validateRegistry } from "./schema.js";
 import type { ProjectPaths } from "../core/paths.js";
 
 export class RegistryStore {
@@ -19,6 +19,16 @@ export class RegistryStore {
     await atomicWrite(this.fs, this.paths.registry, YAML.stringify(registry));
   }
 
+  async readProjectBindings(): Promise<ProjectBindingsConfig> {
+    if (!(await pathExists(this.fs, this.paths.projectBindings))) return { projects: {} };
+    return validateProjectBindings(YAML.parse(await this.fs.readFile(this.paths.projectBindings)));
+  }
+
+  async writeProjectBindings(bindings: ProjectBindingsConfig): Promise<void> {
+    await this.fs.mkdir(path.dirname(this.paths.projectBindings));
+    await atomicWrite(this.fs, this.paths.projectBindings, YAML.stringify(bindings));
+  }
+
   async readLock(): Promise<LockConfig> {
     return validateLock(YAML.parse(await this.fs.readFile(this.paths.lock)));
   }
@@ -28,11 +38,13 @@ export class RegistryStore {
   }
 
   async readManagedLinks(): Promise<ManagedLinksFile> {
-    const parsed = JSON.parse(await this.fs.readFile(this.paths.managedLinks)) as ManagedLinksFile;
-    if (parsed.version !== 1 || !Array.isArray(parsed.links)) {
+    if (!(await pathExists(this.fs, this.paths.managedLinks))) return { version: 2, links: [] };
+    const parsed = JSON.parse(await this.fs.readFile(this.paths.managedLinks)) as Partial<ManagedLinksFile>;
+    if (!Array.isArray(parsed.links)) throw new Error("unsupported managed-links file");
+    if (parsed.version !== 2 || parsed.links.some((link) => link.scope !== "global" && link.scope !== "project")) {
       throw new Error("unsupported managed-links file");
     }
-    return parsed;
+    return { version: 2, links: parsed.links as ManagedLinksFile["links"] };
   }
 
   async writeManagedLinks(value: ManagedLinksFile): Promise<void> {

@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 
 export interface FsPort {
-  lstat(path: string): Promise<{ isSymbolicLink(): boolean }>;
+  lstat(path: string): Promise<{ isDirectory(): boolean; isSymbolicLink(): boolean }>;
   mkdir(path: string): Promise<void>;
   readFile(path: string): Promise<string>;
   readlink(path: string): Promise<string>;

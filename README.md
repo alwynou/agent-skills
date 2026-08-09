@@ -1,6 +1,6 @@
 # Agent Skills Manager
 
-A small, conservative, CLI-first registry for keeping personal and third-party Agent Skills as one source of truth across Codex and Claude Code.
+A small, conservative, CLI-first registry for keeping personal and third-party Agent Skills as one source of truth across Codex, Claude Code, Kimi Code, Pi, and OpenCode.
 
 The core model is:
 
@@ -16,7 +16,7 @@ The manager preserves the standard `SKILL.md` layout. It does not copy skills in
 - Keep third-party Git sources in `vendors/`, preferably as submodules.
 - Pin reviewed vendor commits in `.skill-manager/lock.yaml`.
 - Declare enablement and agent targets in `registry/skills.yaml`.
-- Rebuild Codex and Claude Code installations deterministically.
+- Rebuild Codex, Claude Code, Kimi Code, Pi, and OpenCode installations deterministically.
 - Inspect upstream changes before updating executable skill content.
 
 See [the architecture decision](docs/architecture.md) for boundaries and safety invariants.
@@ -50,9 +50,10 @@ agent-skills/
 ├── registry/skills.yaml            # desired state
 ├── .skill-manager/
 │   ├── lock.yaml                   # reviewed source commits
-│   └── managed-links.json          # links this tool may reconcile
+│   ├── managed-links.json          # machine-local links this tool may reconcile
+│   └── projects.local.yaml         # machine-local project path bindings
 ├── src/
-│   ├── agents/                     # Codex and Claude adapters
+│   ├── agents/                     # supported agent adapters
 │   ├── core/                       # orchestration, types, safety
 │   ├── git/                        # Git process abstraction
 │   ├── installer/                  # conservative symlink reconciler
@@ -73,22 +74,50 @@ sources:
     type: git
     repo: https://github.com/anthropics/skills.git
 
+projects:
+  - storefront
+
 skills:
   builder:
     source: local
     path: skills/builder
     enabled: true
-    agents:
-      - "*"
+    targets:
+      - scope: global
+        agents:
+          - "*"
 
   pdf:
     source: anthropic
     path: skills/pdf
     enabled: true
-    agents:
-      - codex
-      - claude
+    targets:
+      - scope: global
+        agents:
+          - codex
+          - claude
+
+  storefront-review:
+    source: local
+    path: skills/storefront-review
+    enabled: true
+    targets:
+      - scope: project
+        project: storefront
+        agents:
+          - "*"
 ```
+
+Every skill uses explicit `targets`. A skill can be global, project-scoped, installed in multiple projects, or installed at both scopes.
+
+The registry stores portable logical project names, never machine paths. Bind each project once on every device; relative CLI paths are resolved to absolute paths before being stored in the ignored `.skill-manager/projects.local.yaml` file:
+
+```bash
+agent-skills project bind storefront ../storefront
+agent-skills project list
+```
+
+An enabled target whose project is unbound makes `sync` fail before any link changes. Project links in Git worktrees are added precisely to the worktree's local `.git/info/exclude`; tracked `.gitignore` files are never changed. Non-Git project directories are supported without exclude management.
 
 The matching lock file records the reviewed vendor revision:
 
@@ -118,15 +147,19 @@ agent-skills diff <source>
 agent-skills update <source>
 agent-skills enable <skill>
 agent-skills disable <skill>
+agent-skills project list
+agent-skills project bind <project> <path>
+agent-skills project unbind <project>
 ```
 
-- `list` shows resolved skills, sources, enablement, agents, and paths.
+- `list` shows one row per resolved target, including scope, project, agents, and source path.
 - `sync` reconciles symlinks for enabled skills. It never overwrites unknown content.
-- `doctor` validates registry/lock files, sources, `SKILL.md` files, commits, and links.
+- `doctor` validates registry/lock files, projects, sources, `SKILL.md` files, commits, links, and managed Git excludes.
 - `check` fetches remote refs and reports candidates without changing working trees or locks.
 - `diff` shows changes between the locked and upstream candidate commit, scoped to relevant skill paths.
 - `update` updates exactly one clean Git source, writes its lock, and syncs.
 - `enable` / `disable` edit the registry; run `sync` to apply the new state.
+- `project bind` records this device's absolute path for a logical project; `project unbind` refuses while that project still has managed links.
 
 Use `--root <path>` or `AGENT_SKILLS_ROOT` when running outside the registry repository.
 
@@ -134,12 +167,15 @@ Use `--root <path>` or `AGENT_SKILLS_ROOT` when running outside the registry rep
 
 The built-in adapters use:
 
-| Agent | Global skill directory |
-| --- | --- |
-| Codex | `~/.agents/skills` |
-| Claude Code | `~/.claude/skills` |
+| Agent | Global skill directory | Project skill directory |
+| --- | --- | --- |
+| Codex | `~/.agents/skills` | `.agents/skills` |
+| Claude Code | `~/.claude/skills` | `.claude/skills` |
+| Kimi Code | `~/.kimi-code/skills` | `.kimi-code/skills` |
+| Pi Coding Agent | `~/.pi/agent/skills` | `.pi/skills` |
+| OpenCode | `~/.config/opencode/skills` | `.opencode/skills` |
 
-For safe experiments and automated tests, redirect both adapters:
+For safe experiments and automated tests, redirect all adapters:
 
 ```bash
 AGENT_SKILLS_HOME="$(mktemp -d)" npm run dev -- sync
@@ -173,7 +209,7 @@ npm test
 npm run build
 ```
 
-Tests use temporary home directories and verify idempotency, safe cleanup, path confinement, and read-only update checks.
+Tests use temporary home and project directories and verify idempotency, safe cleanup, path confinement, local Git excludes, and read-only update checks.
 
 ## Relationship to `npx skills`
 

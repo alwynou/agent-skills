@@ -4,6 +4,8 @@ import { pathExists, type FsPort } from "../core/fs.js";
 import { UserError } from "../core/errors.js";
 import type { ManagedLink, ResolvedSkill } from "../core/types.js";
 import type { RegistryStore } from "../registry/store.js";
+import type { GitPort } from "../git/client.js";
+import { ProjectExcluder } from "./project-excluder.js";
 
 export interface SyncResult {
   created: string[];
@@ -29,6 +31,7 @@ export class Synchronizer {
     private readonly fs: FsPort,
     private readonly store: RegistryStore,
     private readonly adapters: AgentAdapter[],
+    private readonly git: GitPort,
   ) {}
 
   async desiredLinks(skills: ResolvedSkill[]): Promise<ManagedLink[]> {
@@ -38,18 +41,44 @@ export class Synchronizer {
       if (!(await pathExists(this.fs, path.join(skill.absolutePath, "SKILL.md")))) {
         throw new UserError(`skill ${skill.name} is missing SKILL.md at ${skill.absolutePath}`);
       }
-      for (const agent of skill.agents) {
-        const adapter = adapters.get(agent);
-        if (!adapter) throw new UserError(`no adapter registered for ${agent}`);
-        desired.push({
-          agent,
-          skill: skill.name,
-          linkPath: await adapter.linkPath(skill),
-          targetPath: skill.absolutePath,
-        });
+      for (const target of skill.targets) {
+        let projectRoot: string | undefined;
+        if (target.scope === "project") {
+          if (!target.projectRoot) throw new UserError(`project ${target.projectId} is not bound on this device`);
+          projectRoot = target.projectRoot;
+          if (!(await pathExists(this.fs, target.projectRoot)))
+            throw new UserError(`project ${target.projectId} does not exist at ${target.projectRoot}`);
+          const stat = await this.fs.lstat(target.projectRoot);
+          if (!stat.isDirectory()) throw new UserError(`project ${target.projectId} is not a directory: ${target.projectRoot}`);
+        }
+        for (const agent of target.agents) {
+          const adapter = adapters.get(agent);
+          if (!adapter) throw new UserError(`no adapter registered for ${agent}`);
+          desired.push({
+            agent,
+            skill: skill.name,
+            scope: target.scope,
+            ...(target.scope === "project"
+              ? { projectId: target.projectId, projectRoot: projectRoot as string }
+              : {}),
+            linkPath: await adapter.linkPath(skill, target),
+            targetPath: skill.absolutePath,
+          });
+        }
       }
     }
-    return desired;
+    const unique = new Map<string, ManagedLink>();
+    for (const link of desired) {
+      const existing = unique.get(link.linkPath);
+      if (!existing) {
+        unique.set(link.linkPath, link);
+        continue;
+      }
+      if (existing.targetPath !== link.targetPath || existing.scope !== link.scope || existing.projectId !== link.projectId) {
+        throw new UserError(`${link.linkPath}: multiple skill targets resolve to the same link path`);
+      }
+    }
+    return [...unique.values()];
   }
 
   async sync(skills: ResolvedSkill[]): Promise<SyncResult> {
@@ -57,6 +86,14 @@ export class Synchronizer {
     const previous = await this.store.readManagedLinks();
     const desiredByPath = new Map(desired.map((link) => [link.linkPath, link]));
     const result: SyncResult = { created: [], removed: [], unchanged: [], skipped: [] };
+
+    const installable: ManagedLink[] = [];
+    for (const link of desired) {
+      if (!(await pathExists(this.fs, link.linkPath)) || (await isExpectedLink(this.fs, link))) {
+        installable.push(link);
+      }
+    }
+    const applyExcludes = await new ProjectExcluder(this.fs, this.git).prepare(installable, previous.links);
 
     for (const oldLink of previous.links) {
       if (desiredByPath.has(oldLink.linkPath)) continue;
@@ -85,7 +122,8 @@ export class Synchronizer {
       recorded.push(link);
     }
 
-    await this.store.writeManagedLinks({ version: 1, links: recorded });
+    await applyExcludes();
+    await this.store.writeManagedLinks({ version: 2, links: recorded });
     return result;
   }
 }
