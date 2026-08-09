@@ -14,16 +14,18 @@ The Vercel `skills` CLI is useful for discovery and ad-hoc installation. Its upd
 
 The manager has four distinct states:
 
-1. `registry/skills.yaml` declares sources, portable logical project names, skills, enablement, and explicit global/project agent targets.
+1. `registry/skills.yaml` declares sources, portable logical project names, skills, enablement, global Agent targets, and project-wide targets.
 2. `.skill-manager/lock.yaml` records the reviewed Git commit for each third-party source.
 3. `.skill-manager/projects.local.yaml` binds logical projects to absolute paths on one device and is not committed.
-4. `.skill-manager/managed-links.json` records only links created by this manager and is not committed.
+4. `.skill-manager/managed-links.json` records only links created by this manager, including every Agent consuming a shared link, and is not committed.
 
-Local sources live in `skills/`. Third-party Git worktrees live in `vendors/` and may be Git submodules. Agent adapters translate a resolved skill target into an agent-specific global or project installation path. The synchronizer creates symlinks and reconciles only links recorded in its private, versioned manifest.
+The managed-links manifest is version 3. Version 2 manifests are read as single-consumer records and rewritten as v3 on the next successful sync.
+
+Local sources live in `skills/`. Third-party Git worktrees live in `vendors/` and may be Git submodules. Agent adapters translate global targets into Agent-specific paths. Project targets are shared by every supported Agent: Codex, Kimi Code, Pi, and OpenCode consume `.agents/skills`, while Claude Code receives a `.claude/skills` compatibility link. The synchronizer merges consumers of the same path and reconciles only links recorded in its private, versioned manifest.
 
 New third-party sources are inspected in a temporary checkout before the registry is mutated, then added as Git submodules and pinned in the lock. A selective synchronization partitions the managed manifest by Skill: it reconciles the selected Skill while retaining all other link ownership and Git exclude entries unchanged.
 
-Every skill declares `targets`; there is no implicit global shorthand. Project paths never appear in the portable registry. Each device establishes its own absolute bindings with `project bind`, so cloning the registry on a machine with a different directory layout requires no repository edit.
+Every skill declares `targets`; there is no implicit global shorthand. Project targets use `agents: ["*"]` because project Skills are intentionally cross-Agent. Project paths never appear in the portable registry. Each device establishes its own absolute bindings with `project bind`, so cloning the registry on a machine with a different directory layout requires no repository edit.
 
 ## Safety invariants
 

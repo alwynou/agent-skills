@@ -73,7 +73,7 @@ export interface ResolvedProject {
 }
 
 export interface ManagedLink {
-  agent: AgentId;
+  agents: AgentId[];
   skill: string;
   scope: "global" | "project";
   projectId?: string;
@@ -83,7 +83,7 @@ export interface ManagedLink {
 }
 
 export interface ManagedLinksFile {
-  version: 2;
+  version: 3;
   links: ManagedLink[];
 }
 

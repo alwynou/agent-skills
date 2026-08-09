@@ -141,7 +141,7 @@ export class SkillManager {
       if (otherBinding) throw new UserError(`project path is already bound to ${otherBinding[0]}`);
       bindings.projects[request.projectId] = { path: projectRoot };
       projectBinding = { id: request.projectId, path: projectRoot };
-      target = { scope: "project", project: request.projectId, agents: request.agents };
+      target = { scope: "project", project: request.projectId, agents: ["*"] };
     } else {
       if (request.projectId || request.projectPath) throw new UserError("project options are not allowed for global scope");
       target = { scope: "global", agents: request.agents };
@@ -178,13 +178,14 @@ export class SkillManager {
 
     const resolvedTarget = request.scope === "global"
       ? { scope: "global" as const, agents: request.agents.includes("*") ? this.adapters.map((adapter) => adapter.id) : request.agents.filter((agent) => agent !== "*") }
-      : { scope: "project" as const, projectId: request.projectId as string, projectRoot: projectBinding?.path ?? null, agents: request.agents.includes("*") ? this.adapters.map((adapter) => adapter.id) : request.agents.filter((agent) => agent !== "*") };
+      : { scope: "project" as const, projectId: request.projectId as string, projectRoot: projectBinding?.path ?? null, agents: this.adapters.map((adapter) => adapter.id) };
     const fakeSkill: ResolvedSkill = { name: request.skillName, sourceId, absolutePath: "", enabled: true, targets: [resolvedTarget] };
-    const links = await Promise.all(resolvedTarget.agents.map(async (agent) => {
+    const resolvedLinks = await Promise.all(resolvedTarget.agents.map(async (agent) => {
       const adapter = this.adapters.find((candidate) => candidate.id === agent);
       if (!adapter) throw new UserError(`no adapter registered for ${agent}`);
       return adapter.linkPath(fakeSkill, resolvedTarget);
     }));
+    const links = [...new Set(resolvedLinks)];
 
     if (!request.dryRun) {
       if (sourceAdded) {
@@ -286,8 +287,9 @@ export class SkillManager {
     }
     const correctProjectLinks = [];
     for (const link of desired) {
+      const consumers = link.agents.join("+");
       const label =
-        link.scope === "project" ? `${link.agent}/${link.projectId}/${link.skill}` : `${link.agent}/${link.skill}`;
+        link.scope === "project" ? `${consumers}/${link.projectId}/${link.skill}` : `${consumers}/${link.skill}`;
       if (!(await pathExists(this.fs, link.linkPath))) {
         diagnostics.push({ level: "warning", message: `${label}: link is missing` });
       } else {

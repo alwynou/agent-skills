@@ -82,7 +82,10 @@ export function validateRegistry(value: unknown): RegistryConfig {
       if (target.scope === "project") {
         const project = requiredString(target.project, `${label}.project`);
         if (!projects.includes(project)) throw new UserError(`${label} references unknown project ${project}`);
-        return { scope: "project", project, agents: targetAgents };
+        if (targetAgents.length !== 1 || targetAgents[0] !== "*") {
+          throw new UserError(`${label}.agents must be ["*"] because project Skills are shared by all supported agents`);
+        }
+        return { scope: "project", project, agents: ["*"] };
       }
       throw new UserError(`${label}.scope must be global or project`);
     });

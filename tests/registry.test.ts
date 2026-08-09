@@ -34,7 +34,7 @@ describe("registry validation", () => {
           targets: [
             { scope: "global", agents: ["codex"] },
             { scope: "project", project: "storefront", agents: ["*"] },
-            { scope: "project", project: "admin", agents: ["claude"] },
+            { scope: "project", project: "admin", agents: ["*"] },
           ],
         },
       },
@@ -54,6 +54,7 @@ describe("registry validation", () => {
     expect(() => validateRegistry({ sources: {}, skills: { old: { source: "local", path: "skills/old", enabled: true, agents: ["codex"] } } })).toThrow("targets must be a non-empty list");
     expect(() => validateRegistry({ sources: {}, projects: [], skills: { bad: { source: "local", path: "skills/bad", enabled: true, targets: globalTarget(["mystery"]) } } })).toThrow("unsupported agent");
     expect(() => validateRegistry({ sources: {}, projects: [], skills: { scoped: { source: "local", path: "skills/scoped", enabled: true, targets: [{ scope: "project", project: "missing", agents: ["codex"] }] } } })).toThrow("unknown project missing");
+    expect(() => validateRegistry({ sources: {}, projects: ["app"], skills: { scoped: { source: "local", path: "skills/scoped", enabled: true, targets: [{ scope: "project", project: "app", agents: ["codex"] }] } } })).toThrow("project Skills are shared");
     expect(() => validateRegistry({ sources: {}, projects: [], skills: { invalid: { source: "local", path: "skills/invalid", enabled: true, targets: [{ scope: "workspace", agents: ["codex"] }] } } })).toThrow("scope must be global or project");
   });
 

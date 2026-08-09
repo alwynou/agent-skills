@@ -14,9 +14,12 @@ const help = `agent-skills — declarative Agent Skill manager
 Usage:
   agent-skills [--root <path>] list
   agent-skills [--root <path>] sync [--skill <name>]
-  agent-skills [--root <path>] install <skill> --scope <global|project> --agents <agent|*>
+  agent-skills [--root <path>] install <skill> --scope global --agents <agent|*>
     [--repo <url> --source-id <id> --path <skill-path> --ref <ref>]
-    [--project <id> --project-path <path>] [--dry-run] [--json] [--no-sync]
+    [--dry-run] [--json] [--no-sync]
+  agent-skills [--root <path>] install <skill> --scope project --project <id> --project-path <path>
+    [--repo <url> --source-id <id> --path <skill-path> --ref <ref>]
+    [--dry-run] [--json] [--no-sync]
   agent-skills [--root <path>] doctor
   agent-skills [--root <path>] check [source]
   agent-skills [--root <path>] diff <source>
@@ -147,10 +150,13 @@ async function main(): Promise<void> {
       for (const name of options.values.keys()) if (!allowed.has(name)) throw new UserError(`unknown install option ${name}`);
       const scope = options.values.get("--scope");
       if (scope !== "global" && scope !== "project") throw new UserError("install requires --scope global or project");
+      if (scope === "project" && options.values.has("--agents") && options.values.get("--agents") !== "*") {
+        throw new UserError("project Skills are shared; omit --agents or use --agents *");
+      }
       const request: InstallSkillRequest = {
         skillName,
         scope,
-        agents: parseAgents(options.values.get("--agents")),
+        agents: scope === "project" ? ["*"] : parseAgents(options.values.get("--agents")),
         ...(options.values.get("--repo") ? { repo: options.values.get("--repo") as string } : {}),
         ...(options.values.get("--source-id") ? { sourceId: options.values.get("--source-id") as string } : {}),
         ...(options.values.get("--path") ? { skillPath: options.values.get("--path") as string } : {}),

@@ -39,7 +39,7 @@ describe("CLI", () => {
         "        agents: [codex]",
         "      - scope: project",
         "        project: app",
-        "        agents: [claude]",
+        "        agents: [\"*\"]",
         "",
       ].join("\n"),
     );
@@ -61,6 +61,17 @@ describe("CLI", () => {
     expect(installPlan.links).toEqual([path.join(os.homedir(), ".config", "opencode", "skills", "example")]);
     expect((await fs.readFile(path.join(root, "registry", "skills.yaml"), "utf8"))).not.toContain("opencode");
 
+    const projectDryRun = await execFileAsync(executable, [
+      "src/cli.ts", "--root", root, "install", "example", "--scope", "project",
+      "--project", "app", "--project-path", path.join(root, "app"), "--dry-run", "--json",
+    ], { cwd: path.resolve(".") });
+    const projectPlan = JSON.parse(projectDryRun.stdout);
+    expect(projectPlan.target).toEqual({ scope: "project", project: "app", agents: ["*"] });
+    expect(projectPlan.links.sort()).toEqual([
+      path.join(root, "app", ".agents", "skills", "example"),
+      path.join(root, "app", ".claude", "skills", "example"),
+    ].sort());
+
     const environment = { ...process.env, AGENT_SKILLS_HOME: path.join(root, "home") };
     const beforeBind = await execFileAsync(executable, ["src/cli.ts", "--root", root, "project", "list"], {
       cwd: path.resolve("."),
@@ -80,8 +91,12 @@ describe("CLI", () => {
       cwd: path.resolve("."),
       env: environment,
     });
+    expect(doctor.stdout).toContain("codex+kimi-code+pi-agent+opencode/app/example: link is correct");
     expect(doctor.stdout).toContain("claude/app/example: link is correct");
     expect(doctor.stdout).not.toContain("✗");
+    expect(await fs.readFile(path.join(root, "app", ".git", "info", "exclude"), "utf8")).toContain(
+      "/.agents/skills/example",
+    );
     expect(await fs.readFile(path.join(root, "app", ".git", "info", "exclude"), "utf8")).toContain(
       "/.claude/skills/example",
     );

@@ -60,4 +60,4 @@ skills:
       - scope: project
         project: cfpamf-front-storehouse-manage-front
         agents:
-          - kimi-code
+          - "*"

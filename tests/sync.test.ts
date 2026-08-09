@@ -57,7 +57,7 @@ describe("synchronizer", () => {
     const first = await synchronizer.sync([resolved]);
     expect(first.created).toHaveLength(5);
     const manifest = JSON.parse(await fs.readFile(path.join(root, ".skill-manager", "managed-links.json"), "utf8"));
-    expect(manifest.version).toBe(2);
+    expect(manifest.version).toBe(3);
     expect(manifest.links.every((link: { scope: string }) => link.scope === "global")).toBe(true);
 
     const second = await synchronizer.sync([resolved]);
@@ -72,6 +72,28 @@ describe("synchronizer", () => {
     const { root, globalTarget, skill, synchronizer } = await fixture();
     await fs.writeFile(path.join(root, ".skill-manager", "managed-links.json"), '{"version":1,"links":[]}\n');
     await expect(synchronizer.sync([skill([globalTarget])])).rejects.toThrow("unsupported managed-links file");
+  });
+
+  it("rejects malformed v3 shared consumers", async () => {
+    const { root, globalTarget, skill, synchronizer } = await fixture();
+    await fs.writeFile(path.join(root, ".skill-manager", "managed-links.json"), JSON.stringify({
+      version: 3,
+      links: [{ agents: ["mystery"], skill: "example", scope: "global", linkPath: "/tmp/example", targetPath: "/tmp/target" }],
+    }));
+    await expect(synchronizer.sync([skill([globalTarget])])).rejects.toThrow("unsupported managed-links file");
+  });
+
+  it("migrates v2 link ownership to shared-consumer records", async () => {
+    const { root, home, globalTarget, skill, synchronizer, store } = await fixture();
+    const linkPath = path.join(home, ".agents", "skills", "example");
+    await fs.mkdir(path.dirname(linkPath), { recursive: true });
+    await fs.symlink(path.join(root, "skills", "example"), linkPath, "dir");
+    await fs.writeFile(path.join(root, ".skill-manager", "managed-links.json"), JSON.stringify({
+      version: 2,
+      links: [{ agent: "codex", skill: "example", scope: "global", linkPath, targetPath: path.join(root, "skills", "example") }],
+    }));
+    await synchronizer.sync([skill([{ ...globalTarget, agents: ["codex"] }])]);
+    expect(await store.readManagedLinks()).toMatchObject({ version: 3, links: [{ agents: ["codex"] }] });
   });
 
   it("selectively syncs one skill without changing another skill", async () => {
@@ -102,7 +124,7 @@ describe("synchronizer", () => {
   it("preserves another skill's project Git exclude during selective sync", async () => {
     const { root, projectRoot, projectTarget, skill, synchronizer, git } = await fixture();
     await git.run(projectRoot, ["init", "--quiet"]);
-    const example = skill([{ ...projectTarget, agents: ["codex"] }]);
+    const example = skill([projectTarget]);
     await synchronizer.sync([example]);
     const otherPath = path.join(root, "skills", "other-project");
     await fs.mkdir(otherPath, { recursive: true });
@@ -123,34 +145,31 @@ describe("synchronizer", () => {
     expect(exclude).not.toContain("/.agents/skills/other-project");
   });
 
-  it("creates project links in every agent-specific directory and maintains Git exclude", async () => {
+  it("creates shared and Claude-compatible project links and maintains Git exclude", async () => {
     const { projectRoot, projectTarget, skill, synchronizer, git } = await fixture();
     await git.run(projectRoot, ["init", "--quiet"]);
     await fs.appendFile(path.join(projectRoot, ".git", "info", "exclude"), "custom-user-rule\n");
     const resolved = skill([projectTarget]);
     const result = await synchronizer.sync([resolved]);
-    expect(result.created).toHaveLength(5);
+    expect(result.created).toHaveLength(2);
 
     for (const relativePath of [
       ".agents/skills/example",
       ".claude/skills/example",
-      ".kimi-code/skills/example",
-      ".pi/skills/example",
-      ".opencode/skills/example",
     ]) {
       expect(await fs.realpath(path.join(projectRoot, relativePath))).toBe(await fs.realpath(resolved.absolutePath));
     }
     const exclude = await fs.readFile(path.join(projectRoot, ".git", "info", "exclude"), "utf8");
     expect(exclude).toContain("# BEGIN agent-skills-manager project links");
     expect(exclude).toContain("/.agents/skills/example");
-    expect(exclude).toContain("/.opencode/skills/example");
+    expect(exclude).toContain("/.claude/skills/example");
     expect(exclude).toContain("custom-user-rule");
   });
 
   it("allows the same skill at global and project scope", async () => {
     const { home, projectRoot, globalTarget, projectTarget, skill, synchronizer } = await fixture();
     const result = await synchronizer.sync([skill([globalTarget, projectTarget])]);
-    expect(result.created).toHaveLength(10);
+    expect(result.created).toHaveLength(7);
     expect(await fs.lstat(path.join(home, ".agents", "skills", "example"))).toBeDefined();
     expect(await fs.lstat(path.join(projectRoot, ".agents", "skills", "example"))).toBeDefined();
   });
@@ -158,7 +177,7 @@ describe("synchronizer", () => {
   it("silently installs into a non-Git project without an exclude file", async () => {
     const { projectRoot, projectTarget, skill, synchronizer } = await fixture();
     const result = await synchronizer.sync([skill([projectTarget])]);
-    expect(result.created).toHaveLength(5);
+    expect(result.created).toHaveLength(2);
     await expect(fs.lstat(path.join(projectRoot, ".git", "info", "exclude"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
@@ -182,7 +201,7 @@ describe("synchronizer", () => {
     const resolved = skill([projectTarget]);
     await synchronizer.sync([resolved]);
     const result = await synchronizer.sync([{ ...resolved, enabled: false }]);
-    expect(result.removed).toHaveLength(5);
+    expect(result.removed).toHaveLength(2);
     const exclude = await fs.readFile(path.join(projectRoot, ".git", "info", "exclude"), "utf8");
     expect(exclude).not.toContain("agent-skills-manager project links");
   });
@@ -205,7 +224,7 @@ describe("synchronizer", () => {
       scope: "project",
       projectId: "missing",
       projectRoot: null,
-      agents: ["codex"],
+      agents: ["codex", "claude", "kimi-code", "pi-agent", "opencode"],
     };
     await expect(synchronizer.sync([skill([globalTarget, missingTarget])])).rejects.toThrow("is not bound");
     await expect(fs.lstat(path.join(home, ".agents", "skills", "example"))).rejects.toMatchObject({ code: "ENOENT" });
@@ -233,7 +252,7 @@ describe("synchronizer", () => {
       scope: "project",
       projectId: `project-${index}`,
       projectRoot: root,
-      agents: ["codex"],
+      agents: ["codex", "claude", "kimi-code", "pi-agent", "opencode"],
     }));
     await synchronizer.sync([skill(targets)]);
     const exclude = await fs.readFile(path.join(projectRoot, ".git", "info", "exclude"), "utf8");

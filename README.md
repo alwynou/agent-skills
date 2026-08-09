@@ -108,7 +108,7 @@ skills:
           - "*"
 ```
 
-Every skill uses explicit `targets`. A skill can be global, project-scoped, installed in multiple projects, or installed at both scopes.
+Every skill uses explicit `targets`. A skill can be global, project-scoped, installed in multiple projects, or installed at both scopes. Global targets select individual Agents. Project targets must use `agents: ["*"]`: the manager creates one shared `.agents/skills/<name>` link plus a `.claude/skills/<name>` compatibility link, making the Skill available to every supported Agent in that project.
 
 The registry stores portable logical project names, never machine paths. Bind each project once on every device; relative CLI paths are resolved to absolute paths before being stored in the ignored `.skill-manager/projects.local.yaml` file:
 
@@ -141,7 +141,8 @@ Every registered skill directory must contain `SKILL.md`. Registry paths are con
 ```bash
 agent-skills list
 agent-skills sync [--skill <name>]
-agent-skills install <skill> --scope <global|project> --agents <agent|*> [options]
+agent-skills install <skill> --scope global --agents <agent|*> [options]
+agent-skills install <skill> --scope project --project <id> --project-path <path> [options]
 agent-skills doctor
 agent-skills check [source]
 agent-skills diff <source>

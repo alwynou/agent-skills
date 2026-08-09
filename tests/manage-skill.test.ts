@@ -73,6 +73,8 @@ describe("manage-agent-skills", () => {
     expect(() => parseArgs([...required, "--unknown", "value"])).toThrow("unknown argument --unknown");
     expect(() => parseArgs([...required, "--skill", "bar"])).toThrow("duplicate argument --skill");
     expect(() => parseArgs([...required, "--path"])).toThrow("--path requires a value");
+    expect(() => parseArgs(["--skill", "foo", "--source-url", "https://example.com/foo", "--scope", "project", "--agent", "codex"]))
+      .toThrow("--agent is only allowed for agent-global scope");
   });
 
   it("derives project IDs from GitHub and other hosted Git remotes", () => {
@@ -88,11 +90,12 @@ describe("manage-agent-skills", () => {
     const openAiMetadata = await fs.readFile(path.resolve("skills/manage-agent-skills/agents/openai.yaml"), "utf8");
     expect(skill).toContain("Infer scope from the user’s complete intent; do not keyword-match fixed phrases");
     expect(skill).toContain("disable-model-invocation: true");
-    expect(skill).toContain("The installation CLI uses internal adapter IDs");
+    expect(skill).toContain("Global installation for one Agent uses internal adapter IDs");
     expect(skill).toContain("changes to the central `agent-skills` repository, and selects an installed Node.js 20+ runtime there");
     expect(skill).toContain("| Claude Code | `claude` |");
     expect(skill).toContain("New Skill in an existing source: pass `--source-id` and `--path`; omit `--repo` and `--ref`");
     expect(skill).toContain("Do not assume `agent-skills` is installed on `PATH`");
+    expect(skill).toContain("project scope creates `.agents/skills/<name>` plus `.claude/skills/<name>` compatibility links");
     expect(skill).not.toContain("committed on a branch, pushed, and opened as a Draft PR");
     expect(openAiMetadata).toContain("allow_implicit_invocation: false");
   });

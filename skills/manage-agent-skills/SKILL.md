@@ -11,12 +11,12 @@ Use this repository as the only owner of Skill sources and symlinks. Never insta
 ## Determine the intended scope
 
 - Infer scope from the user’s complete intent; do not keyword-match fixed phrases or treat the examples below as trigger words.
-- When the user means the current project, repository, or workspace, use project scope for the Agent executing this Skill and use the current working directory as the project root.
+- When the user means the current project, repository, or workspace, use project scope, use the current working directory as the project root, and make the Skill available to every supported Agent through the shared project directories.
 - When the user means the current Agent’s personal or global installation, use global scope for that Agent and do not create a project target.
 - When the user means every Agent, every AI tool, or device-wide availability, use global scope for all supported Agents and do not create a project target.
 - Ask one concise question before acting when more than one interpretation remains plausible or the requested scope is absent.
 
-The installation CLI uses internal adapter IDs. Pass the ID corresponding to the Agent executing this Skill; this is not a phrase the user must provide:
+Global installation for one Agent uses internal adapter IDs. Pass the ID corresponding to the Agent executing this Skill; project installation is shared and does not require an Agent ID:
 
 | Executing Agent | `--agent` value |
 | --- | --- |
@@ -51,7 +51,7 @@ Run the shell launcher from the user’s working directory. It records that dire
   --skill <skill-name> \
   --source-url <confirmed-source-url> \
   --scope <project|agent-global|all-global> \
-  --agent <current-agent> \
+  [--agent <current-agent>] \
   [--repo <clone-url> --source-id <source-id> --path <skill-path> --ref <ref>] \
   [--project <logical-project-id>]
 ```
@@ -62,7 +62,7 @@ Choose source flags from registry state:
 - New Skill in an existing source: pass `--source-id` and `--path`; omit `--repo` and `--ref`.
 - New source: pass `--repo`, `--source-id`, and `--path`; pass `--ref` only when pinning a non-default ref.
 
-Do not invoke `install-skill.mjs` directly from the business project. Omit `--agent` only for `all-global`. The script refuses a dirty central repository, updates it to `origin/main`, reloads the updated installer when necessary, then performs the installation dry run. It branches from that main revision, applies a selective sync, validates the manager, reads the commit identity from the central repository’s Git configuration with global fallback, pushes, and opens a Draft PR.
+Do not invoke `install-skill.mjs` directly from the business project. Pass `--agent` only for `agent-global`; project scope creates `.agents/skills/<name>` plus `.claude/skills/<name>` compatibility links. The script refuses a dirty central repository, updates it to `origin/main`, reloads the updated installer when necessary, then performs the installation dry run. It branches from that main revision, applies a selective sync, validates the manager, reads the commit identity from the central repository’s Git configuration with global fallback, pushes, and opens a Draft PR.
 
 The commit title must be exactly:
 

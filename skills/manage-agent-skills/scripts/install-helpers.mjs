@@ -38,7 +38,8 @@ export function parseArgs(argv) {
   for (const required of ["--skill", "--source-url", "--scope"]) if (!values.has(required)) fail(`${required} is required`);
   const scope = values.get("--scope");
   if (!["project", "agent-global", "all-global"].includes(scope)) fail("--scope must be project, agent-global, or all-global");
-  if (scope !== "all-global" && !values.has("--agent")) fail("--agent is required for project and agent-global scope");
+  if (scope === "agent-global" && !values.has("--agent")) fail("--agent is required for agent-global scope");
+  if (scope !== "agent-global" && values.has("--agent")) fail("--agent is only allowed for agent-global scope");
   return values;
 }
 
