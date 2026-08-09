@@ -28,11 +28,21 @@ export class RegistryStore {
   }
 
   async readManagedLinks(): Promise<ManagedLinksFile> {
-    const parsed = JSON.parse(await this.fs.readFile(this.paths.managedLinks)) as ManagedLinksFile;
-    if (parsed.version !== 1 || !Array.isArray(parsed.links)) {
+    const parsed = JSON.parse(await this.fs.readFile(this.paths.managedLinks)) as {
+      version?: number;
+      links?: Array<Omit<ManagedLinksFile["links"][number], "scope"> & { scope?: "global" | "project" }>;
+    };
+    if (!Array.isArray(parsed.links)) throw new Error("unsupported managed-links file");
+    if (parsed.version === 1) {
+      return {
+        version: 2,
+        links: parsed.links.map((link) => ({ ...link, scope: "global" })),
+      };
+    }
+    if (parsed.version !== 2 || parsed.links.some((link) => link.scope !== "global" && link.scope !== "project")) {
       throw new Error("unsupported managed-links file");
     }
-    return parsed;
+    return { version: 2, links: parsed.links as ManagedLinksFile["links"] };
   }
 
   async writeManagedLinks(value: ManagedLinksFile): Promise<void> {

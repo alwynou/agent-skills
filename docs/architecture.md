@@ -14,21 +14,26 @@ The Vercel `skills` CLI is useful for discovery and ad-hoc installation. Its upd
 
 The repository has three distinct states:
 
-1. `registry/skills.yaml` declares sources, skills, enablement, and agent targets.
+1. `registry/skills.yaml` declares sources, named projects, skills, enablement, and global/project agent targets.
 2. `.skill-manager/lock.yaml` records the reviewed Git commit for each third-party source.
 3. `.skill-manager/managed-links.json` records only links created by this manager.
 
-Local sources live in `skills/`. Third-party Git worktrees live in `vendors/` and may be Git submodules. Agent adapters translate a resolved skill into an installation path. The synchronizer creates symlinks and reconciles only links recorded in its private manifest.
+Local sources live in `skills/`. Third-party Git worktrees live in `vendors/` and may be Git submodules. Agent adapters translate a resolved skill target into an agent-specific global or project installation path. The synchronizer creates symlinks and reconciles only links recorded in its private, versioned manifest.
+
+Existing `agents` entries remain a global-target shorthand. The `targets` form can declare global and project placements, including multiple named projects. Relative project paths resolve from the registry repository; absolute paths are accepted for machine-specific layouts.
 
 ## Safety invariants
 
 - Registry paths cannot escape their source root.
+- Skill names cannot escape an agent's skill directory.
+- Project roots must exist before links are created and cannot be filesystem roots.
 - A skill is installable only if `SKILL.md` exists.
 - Existing non-matching files, directories, and links are never overwritten.
 - Stale links are removed only when the on-disk symlink still matches the previously recorded target.
+- Git projects receive exact managed entries in `.git/info/exclude`; unrelated exclude content and occupied user paths are never hidden or rewritten.
 - `check` runs fetch/read operations only.
 - `update` requires one named source, refuses dirty worktrees, requires fast-forward ancestry, checks out the reviewed candidate, updates the lock atomically, then syncs.
-- Tests install only into temporary home directories.
+- Tests install only into temporary home and project directories.
 
 ## Extension points
 

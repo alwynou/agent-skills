@@ -1,18 +1,20 @@
 import path from "node:path";
-import type { AgentId, ResolvedSkill } from "../core/types.js";
+import type { AgentId, ResolvedSkill, ResolvedSkillTarget } from "../core/types.js";
 
 export interface AgentAdapter {
   id: AgentId;
   name: string;
   detect(): Promise<boolean>;
   getGlobalSkillDirectory(): Promise<string>;
-  linkPath(skill: ResolvedSkill): Promise<string>;
+  getProjectSkillDirectory(projectRoot: string): Promise<string>;
+  linkPath(skill: ResolvedSkill, target: ResolvedSkillTarget): Promise<string>;
 }
 
 abstract class HomeAgentAdapter implements AgentAdapter {
   abstract id: AgentId;
   abstract name: string;
   abstract relativeDirectory: string;
+  abstract projectRelativeDirectory: string;
 
   constructor(protected readonly home: string) {}
 
@@ -24,8 +26,16 @@ abstract class HomeAgentAdapter implements AgentAdapter {
     return path.join(this.home, this.relativeDirectory);
   }
 
-  async linkPath(skill: ResolvedSkill): Promise<string> {
-    return path.join(await this.getGlobalSkillDirectory(), skill.name);
+  async getProjectSkillDirectory(projectRoot: string): Promise<string> {
+    return path.join(projectRoot, this.projectRelativeDirectory);
+  }
+
+  async linkPath(skill: ResolvedSkill, target: ResolvedSkillTarget): Promise<string> {
+    const directory =
+      target.scope === "global"
+        ? await this.getGlobalSkillDirectory()
+        : await this.getProjectSkillDirectory(target.projectRoot);
+    return path.join(directory, skill.name);
   }
 }
 
@@ -33,30 +43,35 @@ export class CodexAdapter extends HomeAgentAdapter {
   readonly id = "codex" as const;
   readonly name = "Codex";
   readonly relativeDirectory = path.join(".agents", "skills");
+  readonly projectRelativeDirectory = path.join(".agents", "skills");
 }
 
 export class ClaudeCodeAdapter extends HomeAgentAdapter {
   readonly id = "claude" as const;
   readonly name = "Claude Code";
   readonly relativeDirectory = path.join(".claude", "skills");
+  readonly projectRelativeDirectory = path.join(".claude", "skills");
 }
 
 export class KimiCodeAdapter extends HomeAgentAdapter {
   readonly id = "kimi-code" as const;
   readonly name = "Kimi Code";
   readonly relativeDirectory = path.join(".kimi-code", "skills");
+  readonly projectRelativeDirectory = path.join(".kimi-code", "skills");
 }
 
 export class PiAgentAdapter extends HomeAgentAdapter {
   readonly id = "pi-agent" as const;
   readonly name = "Pi Coding Agent";
   readonly relativeDirectory = path.join(".pi", "agent", "skills");
+  readonly projectRelativeDirectory = path.join(".pi", "skills");
 }
 
 export class OpenCodeAdapter extends HomeAgentAdapter {
   readonly id = "opencode" as const;
   readonly name = "OpenCode";
   readonly relativeDirectory = path.join(".config", "opencode", "skills");
+  readonly projectRelativeDirectory = path.join(".opencode", "skills");
 }
 
 export function builtInAdapters(home: string): AgentAdapter[] {

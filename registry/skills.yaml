@@ -6,6 +6,8 @@ sources:
     type: git
     repo: https://github.com/mattpocock/skills.git
 
+projects: {}
+
 skills:
   herdr:
     source: herdr

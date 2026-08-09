@@ -81,13 +81,17 @@ async function main(): Promise<void> {
         return;
       }
       console.table(
-        skills.map((skill) => ({
-          name: skill.name,
-          source: skill.sourceId,
-          enabled: skill.enabled ? "yes" : "no",
-          agents: skill.agents.join(","),
-          path: path.relative(root, skill.absolutePath),
-        })),
+        skills.flatMap((skill) =>
+          skill.targets.map((target) => ({
+            name: skill.name,
+            source: skill.sourceId,
+            enabled: skill.enabled ? "yes" : "no",
+            scope: target.scope,
+            project: target.scope === "project" ? target.projectId : "-",
+            agents: target.agents.join(","),
+            path: path.relative(root, skill.absolutePath),
+          })),
+        ),
       );
       return;
     }

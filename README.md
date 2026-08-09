@@ -50,9 +50,9 @@ agent-skills/
 ├── registry/skills.yaml            # desired state
 ├── .skill-manager/
 │   ├── lock.yaml                   # reviewed source commits
-│   └── managed-links.json          # links this tool may reconcile
+│   └── managed-links.json          # machine-local links this tool may reconcile
 ├── src/
-│   ├── agents/                     # Codex and Claude adapters
+│   ├── agents/                     # supported agent adapters
 │   ├── core/                       # orchestration, types, safety
 │   ├── git/                        # Git process abstraction
 │   ├── installer/                  # conservative symlink reconciler
@@ -73,6 +73,10 @@ sources:
     type: git
     repo: https://github.com/anthropics/skills.git
 
+projects:
+  storefront:
+    path: ../storefront
+
 skills:
   builder:
     source: local
@@ -88,7 +92,21 @@ skills:
     agents:
       - codex
       - claude
+
+  storefront-review:
+    source: local
+    path: skills/storefront-review
+    enabled: true
+    targets:
+      - scope: project
+        project: storefront
+        agents:
+          - "*"
 ```
+
+The legacy `agents` field is a shorthand for one global target. Use `targets` when a skill should be project-scoped, installed in multiple projects, or installed at both global and project scope. A skill must define exactly one of `agents` or `targets`.
+
+Project paths may be absolute or relative to the registry repository. A project directory must already exist. Project links in Git worktrees are added precisely to the worktree's local `.git/info/exclude`; tracked `.gitignore` files are never changed. Non-Git project directories are supported without exclude management.
 
 The matching lock file records the reviewed vendor revision:
 
@@ -120,9 +138,9 @@ agent-skills enable <skill>
 agent-skills disable <skill>
 ```
 
-- `list` shows resolved skills, sources, enablement, agents, and paths.
+- `list` shows one row per resolved target, including scope, project, agents, and source path.
 - `sync` reconciles symlinks for enabled skills. It never overwrites unknown content.
-- `doctor` validates registry/lock files, sources, `SKILL.md` files, commits, and links.
+- `doctor` validates registry/lock files, projects, sources, `SKILL.md` files, commits, links, and managed Git excludes.
 - `check` fetches remote refs and reports candidates without changing working trees or locks.
 - `diff` shows changes between the locked and upstream candidate commit, scoped to relevant skill paths.
 - `update` updates exactly one clean Git source, writes its lock, and syncs.
@@ -134,13 +152,13 @@ Use `--root <path>` or `AGENT_SKILLS_ROOT` when running outside the registry rep
 
 The built-in adapters use:
 
-| Agent | Global skill directory |
-| --- | --- |
-| Codex | `~/.agents/skills` |
-| Claude Code | `~/.claude/skills` |
-| Kimi Code | `~/.kimi-code/skills` |
-| Pi Coding Agent | `~/.pi/agent/skills` |
-| OpenCode | `~/.config/opencode/skills` |
+| Agent | Global skill directory | Project skill directory |
+| --- | --- | --- |
+| Codex | `~/.agents/skills` | `.agents/skills` |
+| Claude Code | `~/.claude/skills` | `.claude/skills` |
+| Kimi Code | `~/.kimi-code/skills` | `.kimi-code/skills` |
+| Pi Coding Agent | `~/.pi/agent/skills` | `.pi/skills` |
+| OpenCode | `~/.config/opencode/skills` | `.opencode/skills` |
 
 For safe experiments and automated tests, redirect all adapters:
 
@@ -176,7 +194,7 @@ npm test
 npm run build
 ```
 
-Tests use temporary home directories and verify idempotency, safe cleanup, path confinement, and read-only update checks.
+Tests use temporary home and project directories and verify idempotency, safe cleanup, path confinement, local Git excludes, and read-only update checks.
 
 ## Relationship to `npx skills`
 

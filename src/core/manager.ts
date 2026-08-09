@@ -9,6 +9,7 @@ import { resolveSkills } from "../registry/resolve.js";
 import type { GitPort } from "../git/client.js";
 import { GitSource } from "../sources/git-source.js";
 import { Synchronizer, type SyncResult } from "../installer/synchronizer.js";
+import { ProjectExcluder } from "../installer/project-excluder.js";
 import { UserError } from "./errors.js";
 
 export class SkillManager {
@@ -30,7 +31,7 @@ export class SkillManager {
   }
 
   async sync(): Promise<SyncResult> {
-    return new Synchronizer(this.fs, this.store, this.adapters).sync(await this.list());
+    return new Synchronizer(this.fs, this.store, this.adapters, this.git).sync(await this.list());
   }
 
   async doctor(): Promise<Diagnostic[]> {
@@ -70,10 +71,19 @@ export class SkillManager {
       }
     }
 
-    const desired = await new Synchronizer(this.fs, this.store, this.adapters).desiredLinks(skills).catch(() => []);
+    let desired;
+    try {
+      desired = await new Synchronizer(this.fs, this.store, this.adapters, this.git).desiredLinks(skills);
+    } catch (error) {
+      diagnostics.push({ level: "error", message: (error as Error).message });
+      return diagnostics;
+    }
+    const correctProjectLinks = [];
     for (const link of desired) {
+      const label =
+        link.scope === "project" ? `${link.agent}/${link.projectId}/${link.skill}` : `${link.agent}/${link.skill}`;
       if (!(await pathExists(this.fs, link.linkPath))) {
-        diagnostics.push({ level: "warning", message: `${link.agent}/${link.skill}: link is missing` });
+        diagnostics.push({ level: "warning", message: `${label}: link is missing` });
       } else {
         const stat = await this.fs.lstat(link.linkPath);
         if (!stat.isSymbolicLink()) {
@@ -82,11 +92,15 @@ export class SkillManager {
           const target = path.resolve(path.dirname(link.linkPath), await this.fs.readlink(link.linkPath));
           diagnostics.push(
             target === path.resolve(link.targetPath)
-              ? { level: "ok", message: `${link.agent}/${link.skill}: link is correct` }
-              : { level: "error", message: `${link.agent}/${link.skill}: link points elsewhere` },
+              ? { level: "ok", message: `${label}: link is correct` }
+              : { level: "error", message: `${label}: link points elsewhere` },
           );
+          if (link.scope === "project" && target === path.resolve(link.targetPath)) correctProjectLinks.push(link);
         }
       }
+    }
+    for (const issue of await new ProjectExcluder(this.fs, this.git).diagnose(correctProjectLinks)) {
+      diagnostics.push({ level: "error", message: issue });
     }
     return diagnostics;
   }
