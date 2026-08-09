@@ -7,12 +7,16 @@ import { NodeFs } from "./core/fs.js";
 import { GitClient } from "./git/client.js";
 import { RegistryStore } from "./registry/store.js";
 import { errorMessage, UserError } from "./core/errors.js";
+import { agentIds, type AgentId, type InstallSkillRequest } from "./core/types.js";
 
 const help = `agent-skills — declarative Agent Skill manager
 
 Usage:
   agent-skills [--root <path>] list
-  agent-skills [--root <path>] sync
+  agent-skills [--root <path>] sync [--skill <name>]
+  agent-skills [--root <path>] install <skill> --scope <global|project> --agents <agent|*>
+    [--repo <url> --source-id <id> --path <skill-path> --ref <ref>]
+    [--project <id> --project-path <path>] [--dry-run] [--json] [--no-sync]
   agent-skills [--root <path>] doctor
   agent-skills [--root <path>] check [source]
   agent-skills [--root <path>] diff <source>
@@ -60,6 +64,35 @@ function requireOperand(command: string, operands: string[], index = 0): string 
   return operand;
 }
 
+function parseOptions(args: string[], booleanNames: string[] = []): { values: Map<string, string>; flags: Set<string> } {
+  const values = new Map<string, string>();
+  const flags = new Set<string>();
+  const booleans = new Set(booleanNames);
+  for (let index = 0; index < args.length; index += 1) {
+    const name = args[index];
+    if (!name?.startsWith("--")) throw new UserError(`unexpected argument ${name}`);
+    if (booleans.has(name)) {
+      flags.add(name);
+      continue;
+    }
+    const value = args[index + 1];
+    if (!value || value.startsWith("--")) throw new UserError(`${name} requires a value`);
+    if (values.has(name)) throw new UserError(`${name} may only be specified once`);
+    values.set(name, value);
+    index += 1;
+  }
+  return { values, flags };
+}
+
+function parseAgents(value: string | undefined): Array<AgentId | "*"> {
+  if (!value) throw new UserError("install requires --agents");
+  const agents = value.split(",").filter(Boolean);
+  if (agents.length === 0 || agents.some((agent) => agent !== "*" && !agentIds.includes(agent as AgentId))) {
+    throw new UserError(`unsupported agents ${value}`);
+  }
+  return agents as Array<AgentId | "*">;
+}
+
 async function main(): Promise<void> {
   const { root, command, operands } = parseArguments(process.argv.slice(2));
   if (command === "help") {
@@ -100,9 +133,36 @@ async function main(): Promise<void> {
       return;
     }
     case "sync": {
-      const result = await manager.sync();
+      const options = parseOptions(operands);
+      for (const name of options.values.keys()) if (name !== "--skill") throw new UserError(`unknown sync option ${name}`);
+      const result = await manager.sync(options.values.get("--skill"));
       console.log(`created ${result.created.length}, removed ${result.removed.length}, unchanged ${result.unchanged.length}`);
       for (const skipped of result.skipped) console.warn(`warning: skipped ${skipped}`);
+      return;
+    }
+    case "install": {
+      const skillName = requireOperand(command, operands);
+      const options = parseOptions(operands.slice(1), ["--dry-run", "--json", "--no-sync"]);
+      const allowed = new Set(["--scope", "--agents", "--repo", "--source-id", "--path", "--ref", "--project", "--project-path"]);
+      for (const name of options.values.keys()) if (!allowed.has(name)) throw new UserError(`unknown install option ${name}`);
+      const scope = options.values.get("--scope");
+      if (scope !== "global" && scope !== "project") throw new UserError("install requires --scope global or project");
+      const request: InstallSkillRequest = {
+        skillName,
+        scope,
+        agents: parseAgents(options.values.get("--agents")),
+        ...(options.values.get("--repo") ? { repo: options.values.get("--repo") as string } : {}),
+        ...(options.values.get("--source-id") ? { sourceId: options.values.get("--source-id") as string } : {}),
+        ...(options.values.get("--path") ? { skillPath: options.values.get("--path") as string } : {}),
+        ...(options.values.get("--ref") ? { ref: options.values.get("--ref") as string } : {}),
+        ...(options.values.get("--project") ? { projectId: options.values.get("--project") as string } : {}),
+        ...(options.values.get("--project-path") ? { projectPath: options.values.get("--project-path") as string } : {}),
+        dryRun: options.flags.has("--dry-run"),
+        sync: !options.flags.has("--no-sync"),
+      };
+      const plan = await manager.install(request);
+      if (options.flags.has("--json")) console.log(JSON.stringify(plan, null, 2));
+      else console.log(`${plan.skill}: ${plan.applied ? "installed" : "planned"} ${plan.target.scope} target (${plan.links.length} link(s))`);
       return;
     }
     case "doctor": {

@@ -74,6 +74,55 @@ describe("synchronizer", () => {
     await expect(synchronizer.sync([skill([globalTarget])])).rejects.toThrow("unsupported managed-links file");
   });
 
+  it("selectively syncs one skill without changing another skill", async () => {
+    const { root, home, globalTarget, skill, synchronizer, store } = await fixture();
+    const example = skill([{ ...globalTarget, agents: ["codex"] }]);
+    await synchronizer.sync([example]);
+    const otherPath = path.join(root, "skills", "other");
+    await fs.mkdir(otherPath, { recursive: true });
+    await fs.writeFile(path.join(otherPath, "SKILL.md"), "---\nname: other\ndescription: test\n---\n");
+    const other: ResolvedSkill = {
+      ...example,
+      name: "other",
+      absolutePath: otherPath,
+      targets: [{ scope: "global", agents: ["claude"] }],
+    };
+
+    await synchronizer.sync([example, other], new Set(["other"]));
+    expect(await fs.realpath(path.join(home, ".agents", "skills", "example"))).toBe(await fs.realpath(example.absolutePath));
+    expect(await fs.realpath(path.join(home, ".claude", "skills", "other"))).toBe(await fs.realpath(otherPath));
+    expect((await store.readManagedLinks()).links.map((link) => link.skill).sort()).toEqual(["example", "other"]);
+
+    await synchronizer.sync([example, { ...other, enabled: false }], new Set(["other"]));
+    expect(await fs.realpath(path.join(home, ".agents", "skills", "example"))).toBe(await fs.realpath(example.absolutePath));
+    await expect(fs.lstat(path.join(home, ".claude", "skills", "other"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await store.readManagedLinks()).links.map((link) => link.skill)).toEqual(["example"]);
+  });
+
+  it("preserves another skill's project Git exclude during selective sync", async () => {
+    const { root, projectRoot, projectTarget, skill, synchronizer, git } = await fixture();
+    await git.run(projectRoot, ["init", "--quiet"]);
+    const example = skill([{ ...projectTarget, agents: ["codex"] }]);
+    await synchronizer.sync([example]);
+    const otherPath = path.join(root, "skills", "other-project");
+    await fs.mkdir(otherPath, { recursive: true });
+    await fs.writeFile(path.join(otherPath, "SKILL.md"), "---\nname: other-project\ndescription: test\n---\n");
+    const other: ResolvedSkill = {
+      ...example,
+      name: "other-project",
+      absolutePath: otherPath,
+    };
+    await synchronizer.sync([example, other], new Set(["other-project"]));
+    let exclude = await fs.readFile(path.join(projectRoot, ".git", "info", "exclude"), "utf8");
+    expect(exclude).toContain("/.agents/skills/example");
+    expect(exclude).toContain("/.agents/skills/other-project");
+
+    await synchronizer.sync([example, { ...other, enabled: false }], new Set(["other-project"]));
+    exclude = await fs.readFile(path.join(projectRoot, ".git", "info", "exclude"), "utf8");
+    expect(exclude).toContain("/.agents/skills/example");
+    expect(exclude).not.toContain("/.agents/skills/other-project");
+  });
+
   it("creates project links in every agent-specific directory and maintains Git exclude", async () => {
     const { projectRoot, projectTarget, skill, synchronizer, git } = await fixture();
     await git.run(projectRoot, ["init", "--quiet"]);

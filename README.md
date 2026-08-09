@@ -140,7 +140,8 @@ Every registered skill directory must contain `SKILL.md`. Registry paths are con
 
 ```bash
 agent-skills list
-agent-skills sync
+agent-skills sync [--skill <name>]
+agent-skills install <skill> --scope <global|project> --agents <agent|*> [options]
 agent-skills doctor
 agent-skills check [source]
 agent-skills diff <source>
@@ -153,7 +154,8 @@ agent-skills project unbind <project>
 ```
 
 - `list` shows one row per resolved target, including scope, project, agents, and source path.
-- `sync` reconciles symlinks for enabled skills. It never overwrites unknown content.
+- `sync` reconciles symlinks for enabled skills. `--skill` limits reconciliation to one Skill while preserving every other managed link.
+- `install` registers or extends a Skill target, optionally imports and pins a new Git source, and supports mutation-free `--dry-run --json` planning.
 - `doctor` validates registry/lock files, projects, sources, `SKILL.md` files, commits, links, and managed Git excludes.
 - `check` fetches remote refs and reports candidates without changing working trees or locks.
 - `diff` shows changes between the locked and upstream candidate commit, scoped to relevant skill paths.
@@ -162,6 +164,27 @@ agent-skills project unbind <project>
 - `project bind` records this device's absolute path for a logical project; `project unbind` refuses while that project still has managed links.
 
 Use `--root <path>` or `AGENT_SKILLS_ROOT` when running outside the registry repository.
+
+Install an already registered Skill into one Agent globally:
+
+```bash
+agent-skills install herdr --scope global --agents codex
+```
+
+Import a new third-party Skill and install it into a named project:
+
+```bash
+agent-skills install example \
+  --repo https://github.com/owner/skills.git \
+  --source-id owner-skills \
+  --path skills/example \
+  --scope project \
+  --agents codex \
+  --project owner-app \
+  --project-path /absolute/path/to/app
+```
+
+The bundled `manage-agent-skills` Skill discovers sources, asks for confirmation before pulling name-only matches, invokes this interface, and publishes tracked registry changes from a feature branch as a Draft PR.
 
 ## Installation destinations
 
