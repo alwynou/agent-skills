@@ -5,7 +5,8 @@ sources:
   mattpocock:
     type: git
     repo: https://github.com/mattpocock/skills.git
-projects: []
+projects:
+  - storehouse-manage-front
 skills:
   manage-agent-skills:
     source: local
@@ -51,3 +52,12 @@ skills:
           - kimi-code
           - pi-agent
           - opencode
+  handoff:
+    source: mattpocock
+    path: skills/productivity/handoff
+    enabled: true
+    targets:
+      - scope: project
+        project: storehouse-manage-front
+        agents:
+          - kimi-code
