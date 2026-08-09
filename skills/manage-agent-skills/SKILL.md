@@ -1,6 +1,6 @@
 ---
 name: manage-agent-skills
-description: Find, register, and install Agent Skills through the central agent-skills repository. Use when the user asks to add or install an existing or third-party Skill for the current project, the current coding Agent globally, or every supported Agent globally.
+description: Install, unlink, or completely delete Agent Skills through the central agent-skills repository. Use when the user explicitly asks to manage an existing, local, or third-party Skill for a project, one coding Agent globally, or every supported Agent globally.
 disable-model-invocation: true
 ---
 
@@ -25,6 +25,14 @@ Global installation for one Agent uses internal adapter IDs. Pass the ID corresp
 | Kimi Code | `kimi-code` |
 | Pi | `pi-agent` |
 | OpenCode | `opencode` |
+
+## Determine the intended operation
+
+- Treat “remove”, “uninstall”, or equivalent wording as unlinking only when the user wants to stop exposing a Skill at one or more scopes. This preserves the Skill source and uses `remove`.
+- Treat “delete completely”, “delete the Skill itself”, or equivalent wording as deleting the registered Skill and its owned content. This uses `delete`.
+- Treat an explicit request to delete a whole third-party source as deleting every registered Skill from that source plus its lock, submodule, and vendor checkout. This uses `delete --source` and never accepts `local`.
+- Ask one concise question when unlinking and complete deletion are both plausible. Do not infer complete deletion from a vague removal request.
+- Never delete `manage-agent-skills` through its own workflow.
 
 ## Resolve the source
 
@@ -71,6 +79,38 @@ feat(skills): 添加 <skill-name> skill (<source-url>)
 ```
 
 If only local binding or links change, expect no branch, commit, or PR. Report the installed scope, created links, locked commit, branch, commit, and Draft PR URL when present.
+
+## Remove or delete and publish
+
+Run the change launcher from the user’s working directory. It changes to the central repository before selecting Node.js and running the manager:
+
+```bash
+# Remove one project target
+<skill-real-path>/scripts/change-skill.sh \
+  --action remove --skill <skill-name> \
+  --scope project --project <logical-project-id>
+
+# Remove one Agent globally, every Agent globally, or every target
+<skill-real-path>/scripts/change-skill.sh \
+  --action remove --skill <skill-name> \
+  --scope <agent-global|all-global|all> [--agent <current-agent>]
+
+# Completely delete one Skill or a whole third-party source
+<skill-real-path>/scripts/change-skill.sh --action delete --skill <skill-name>
+<skill-real-path>/scripts/change-skill.sh --action delete-source --source <source-id>
+```
+
+Removing the final target leaves the Skill disabled and available for a later reinstall. Deleting a local Skill removes its clean, tracked `skills/<name>` directory. Deleting the only Skill from a third-party source removes the source too; when other registered Skills share that source, the source, lock, and vendor remain. Whole-source deletion is explicit and atomic. Unknown, modified, untracked, shared local, or out-of-tree content causes a safe refusal.
+
+The change launcher uses these commit titles:
+
+```text
+chore(skills): 移除 <skill-name> 的 <scope> 安装
+chore(skills): 删除 <skill-name> skill
+chore(skills): 删除 <source-id> source 及其 Skills
+```
+
+It skips branch, commit, and PR creation for an idempotent no-op. Otherwise it validates, stages only planned paths, pushes a feature branch, and opens a Draft PR.
 
 ## Safety
 

@@ -5,6 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { resolveGitIdentity } from "../skills/manage-agent-skills/scripts/git-identity.mjs";
+import { changeCliArgs, changeMetadata, parseChangeArgs } from "../skills/manage-agent-skills/scripts/change-helpers.mjs";
 import { parseArgs, projectIdFromRemote, run } from "../skills/manage-agent-skills/scripts/install-helpers.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -33,6 +34,38 @@ describe("manage-agent-skills", () => {
     expect(script).toContain('resolveGitIdentity(root)');
     expect(script).toContain('`feat(skills): 添加 ${values.get("--skill")} skill (${values.get("--source-url")})`');
     expect(script).toContain('["pr", "create", "--draft", "--base", "main"');
+  });
+
+  it("maps remove and delete requests to deterministic CLI and publication metadata", () => {
+    const projectRemove = parseChangeArgs([
+      "--action", "remove", "--skill", "review", "--scope", "project", "--project", "storefront",
+    ]);
+    expect(changeCliArgs(projectRemove, true)).toEqual([
+      "src/cli.ts", "remove", "review", "--scope", "project", "--project", "storefront", "--dry-run", "--no-sync", "--json",
+    ]);
+    expect(changeMetadata(projectRemove)).toEqual({
+      branch: "skills/remove-review-project",
+      title: "chore(skills): 移除 review 的 project 安装",
+    });
+
+    const sourceDelete = parseChangeArgs(["--action", "delete-source", "--source", "upstream"]);
+    expect(changeCliArgs(sourceDelete, false)).toEqual(["src/cli.ts", "delete", "--source", "upstream", "--json"]);
+    expect(changeMetadata(sourceDelete)).toEqual({
+      branch: "skills/delete-source-upstream",
+      title: "chore(skills): 删除 upstream source 及其 Skills",
+    });
+    expect(() => parseChangeArgs(["--action", "remove", "--skill", "review", "--scope", "agent-global"]))
+      .toThrow("--agent is required");
+    expect(() => parseChangeArgs(["--action", "delete-source", "--source", "upstream", "--skill", "review"]))
+      .toThrow("--skill is not allowed");
+  });
+
+  it("publishes removals and deletions as Draft PRs with central Git identity", async () => {
+    const script = await fs.readFile(path.resolve("skills/manage-agent-skills/scripts/change-skill.mjs"), "utf8");
+    expect(script).toContain("resolveGitIdentity(root)");
+    expect(script).toContain('["add", "-A", "--", ...plan.trackedChanges]');
+    expect(script).toContain('["pr", "create", "--draft", "--base", "main"');
+    expect(script).toContain("plan.noOp ? plan");
   });
 
   it("changes to the central repository before launching Node and preserves the working directory", async () => {
@@ -96,6 +129,9 @@ describe("manage-agent-skills", () => {
     expect(skill).toContain("New Skill in an existing source: pass `--source-id` and `--path`; omit `--repo` and `--ref`");
     expect(skill).toContain("Do not assume `agent-skills` is installed on `PATH`");
     expect(skill).toContain("project scope creates `.agents/skills/<name>` plus `.claude/skills/<name>` compatibility links");
+    expect(skill).toContain("Treat “remove”, “uninstall”, or equivalent wording as unlinking only");
+    expect(skill).toContain("Deleting the only Skill from a third-party source removes the source too");
+    expect(skill).toContain("change-skill.sh --action delete-source");
     expect(skill).not.toContain("committed on a branch, pushed, and opened as a Draft PR");
     expect(openAiMetadata).toContain("allow_implicit_invocation: false");
   });

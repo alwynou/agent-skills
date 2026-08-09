@@ -25,7 +25,9 @@ Local sources live in `skills/`. Third-party Git worktrees live in `vendors/` an
 
 New third-party sources are inspected in a temporary checkout before the registry is mutated, then added as Git submodules and pinned in the lock. A selective synchronization partitions the managed manifest by Skill: it reconciles the selected Skill while retaining all other link ownership and Git exclude entries unchanged.
 
-Every skill declares `targets`; there is no implicit global shorthand. Project targets use `agents: ["*"]` because project Skills are intentionally cross-Agent. Project paths never appear in the portable registry. Each device establishes its own absolute bindings with `project bind`, so cloning the registry on a machine with a different directory layout requires no repository edit.
+Every enabled skill declares at least one target; there is no implicit global shorthand. A disabled Skill may retain an empty target list after its final installation is removed, and reinstalling it adds a target and enables it. Project targets use `agents: ["*"]` because project Skills are intentionally cross-Agent. Project paths never appear in the portable registry. Each device establishes its own absolute bindings with `project bind`, so cloning the registry on a machine with a different directory layout requires no repository edit.
+
+`remove` changes desired installation state without deleting Skill content. `delete <skill>` removes the Skill from desired state and deletes content only when ownership is provable: a local Skill must be a clean, tracked, real directory under `skills/`, and a third-party vendor is removed only when no other registered Skill uses its source. `delete --source` is the explicit atomic boundary for removing a third-party source and all of its registered Skills. Selective sync accepts a now-missing Skill only for these reconciliation paths, so stale managed links and exact Git exclude entries can be cleaned while unrelated manifest state is preserved.
 
 ## Safety invariants
 
@@ -37,6 +39,9 @@ Every skill declares `targets`; there is no implicit global shorthand. Project t
 - Existing non-matching files, directories, and links are never overwritten.
 - Dry-run installation may fetch into a temporary directory but cannot modify registry, lock, submodules, bindings, links, or Git excludes.
 - Stale links are removed only when the on-disk symlink still matches the previously recorded target.
+- Removing or deleting a Skill preserves any link that a user has replaced and reports it as skipped.
+- Local deletion refuses symlinks, shared paths, paths outside `skills/`, dirty or untracked content, and the self-managing `manage-agent-skills` Skill.
+- Third-party source deletion refuses `local`, dirty vendors, missing vendors, and paths that are not tracked submodules under `vendors/`.
 - A project cannot be unbound while its links remain in the managed-links manifest.
 - Git projects receive exact managed entries in `.git/info/exclude`; unrelated exclude content and occupied user paths are never hidden or rewritten.
 - `check` runs fetch/read operations only.

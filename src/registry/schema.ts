@@ -68,8 +68,9 @@ export function validateRegistry(value: unknown): RegistryConfig {
     if (typeof candidate.enabled !== "boolean") {
       throw new UserError(`skill ${name}.enabled must be a boolean`);
     }
-    if (!Array.isArray(candidate.targets) || candidate.targets.length === 0) {
-      throw new UserError(`skill ${name}.targets must be a non-empty list`);
+    if (!Array.isArray(candidate.targets)) throw new UserError(`skill ${name}.targets must be a list`);
+    if (candidate.targets.length === 0 && candidate.enabled) {
+      throw new UserError(`skill ${name} with no targets must be disabled`);
     }
     const targets: SkillTargetConfig[] = candidate.targets.map((target, index) => {
       const label = `skill ${name}.targets[${index}]`;

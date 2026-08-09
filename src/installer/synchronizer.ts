@@ -82,9 +82,9 @@ export class Synchronizer {
     return [...unique.values()];
   }
 
-  async sync(skills: ResolvedSkill[], selectedSkills?: ReadonlySet<string>): Promise<SyncResult> {
+  async sync(skills: ResolvedSkill[], selectedSkills?: ReadonlySet<string>, allowMissing = false): Promise<SyncResult> {
     const selected = selectedSkills ? skills.filter((skill) => selectedSkills.has(skill.name)) : skills;
-    if (selectedSkills && selected.length !== selectedSkills.size) {
+    if (selectedSkills && selected.length !== selectedSkills.size && !allowMissing) {
       const found = new Set(selected.map((skill) => skill.name));
       const missing = [...selectedSkills].filter((name) => !found.has(name));
       throw new UserError(`unknown skill ${missing.join(", ")}`);

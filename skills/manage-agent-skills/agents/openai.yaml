@@ -1,7 +1,7 @@
 interface:
   display_name: "Manage Agent Skills"
-  short_description: "Install managed Skills at project or global scope"
-  default_prompt: "Use $manage-agent-skills to find and install a Skill at the intended project or global scope."
+  short_description: "Install, unlink, or delete centrally managed Skills"
+  default_prompt: "Use $manage-agent-skills to install, unlink, or completely delete a Skill at the intended scope."
 
 policy:
   allow_implicit_invocation: false
