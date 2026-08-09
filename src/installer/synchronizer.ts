@@ -81,9 +81,17 @@ export class Synchronizer {
     return [...unique.values()];
   }
 
-  async sync(skills: ResolvedSkill[]): Promise<SyncResult> {
-    const desired = await this.desiredLinks(skills);
+  async sync(skills: ResolvedSkill[], selectedSkills?: ReadonlySet<string>): Promise<SyncResult> {
+    const selected = selectedSkills ? skills.filter((skill) => selectedSkills.has(skill.name)) : skills;
+    if (selectedSkills && selected.length !== selectedSkills.size) {
+      const found = new Set(selected.map((skill) => skill.name));
+      const missing = [...selectedSkills].filter((name) => !found.has(name));
+      throw new UserError(`unknown skill ${missing.join(", ")}`);
+    }
+    const desired = await this.desiredLinks(selected);
     const previous = await this.store.readManagedLinks();
+    const untouched = selectedSkills ? previous.links.filter((link) => !selectedSkills.has(link.skill)) : [];
+    const previousSelected = selectedSkills ? previous.links.filter((link) => selectedSkills.has(link.skill)) : previous.links;
     const desiredByPath = new Map(desired.map((link) => [link.linkPath, link]));
     const result: SyncResult = { created: [], removed: [], unchanged: [], skipped: [] };
 
@@ -93,9 +101,9 @@ export class Synchronizer {
         installable.push(link);
       }
     }
-    const applyExcludes = await new ProjectExcluder(this.fs, this.git).prepare(installable, previous.links);
+    const applyExcludes = await new ProjectExcluder(this.fs, this.git).prepare([...untouched, ...installable], previous.links);
 
-    for (const oldLink of previous.links) {
+    for (const oldLink of previousSelected) {
       if (desiredByPath.has(oldLink.linkPath)) continue;
       if (await isExpectedLink(this.fs, oldLink)) {
         await this.fs.unlink(oldLink.linkPath);
@@ -105,7 +113,7 @@ export class Synchronizer {
       }
     }
 
-    const recorded: ManagedLink[] = [];
+    const recorded: ManagedLink[] = [...untouched];
     for (const link of desired) {
       await this.fs.mkdir(path.dirname(link.linkPath));
       if (await pathExists(this.fs, link.linkPath)) {

@@ -99,3 +99,29 @@ export interface UpdateInfo {
   candidate: string;
   behind: number | null;
 }
+
+export interface InstallSkillRequest {
+  skillName: string;
+  scope: "global" | "project";
+  agents: Array<AgentId | "*">;
+  repo?: string;
+  sourceId?: string;
+  skillPath?: string;
+  ref?: string;
+  projectId?: string;
+  projectPath?: string;
+  dryRun: boolean;
+  sync: boolean;
+}
+
+export interface InstallSkillPlan {
+  skill: string;
+  source: { id: string; repo: string | null; commit: string | null; added: boolean };
+  skillPath: string;
+  target: SkillTargetConfig;
+  projectBinding: { id: string; path: string } | null;
+  trackedChanges: string[];
+  localChanges: string[];
+  links: string[];
+  applied: boolean;
+}

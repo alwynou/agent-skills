@@ -52,6 +52,15 @@ describe("CLI", () => {
     expect(stdout).toContain("'project'");
     expect(stdout).toContain("'app'");
 
+    const dryRun = await execFileAsync(executable, [
+      "src/cli.ts", "--root", root, "install", "example", "--scope", "global", "--agents", "opencode", "--dry-run", "--json",
+    ], { cwd: path.resolve(".") });
+    const installPlan = JSON.parse(dryRun.stdout);
+    expect(installPlan.applied).toBe(false);
+    expect(installPlan.target).toEqual({ scope: "global", agents: ["opencode"] });
+    expect(installPlan.links).toEqual([path.join(os.homedir(), ".config", "opencode", "skills", "example")]);
+    expect((await fs.readFile(path.join(root, "registry", "skills.yaml"), "utf8"))).not.toContain("opencode");
+
     const environment = { ...process.env, AGENT_SKILLS_HOME: path.join(root, "home") };
     const beforeBind = await execFileAsync(executable, ["src/cli.ts", "--root", root, "project", "list"], {
       cwd: path.resolve("."),

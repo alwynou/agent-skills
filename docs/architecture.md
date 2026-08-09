@@ -21,6 +21,8 @@ The manager has four distinct states:
 
 Local sources live in `skills/`. Third-party Git worktrees live in `vendors/` and may be Git submodules. Agent adapters translate a resolved skill target into an agent-specific global or project installation path. The synchronizer creates symlinks and reconciles only links recorded in its private, versioned manifest.
 
+New third-party sources are inspected in a temporary checkout before the registry is mutated, then added as Git submodules and pinned in the lock. A selective synchronization partitions the managed manifest by Skill: it reconciles the selected Skill while retaining all other link ownership and Git exclude entries unchanged.
+
 Every skill declares `targets`; there is no implicit global shorthand. Project paths never appear in the portable registry. Each device establishes its own absolute bindings with `project bind`, so cloning the registry on a machine with a different directory layout requires no repository edit.
 
 ## Safety invariants
@@ -31,6 +33,7 @@ Every skill declares `targets`; there is no implicit global shorthand. Project p
 - An unbound enabled project target aborts sync before any link or Git exclude mutation.
 - A skill is installable only if `SKILL.md` exists.
 - Existing non-matching files, directories, and links are never overwritten.
+- Dry-run installation may fetch into a temporary directory but cannot modify registry, lock, submodules, bindings, links, or Git excludes.
 - Stale links are removed only when the on-disk symlink still matches the previously recorded target.
 - A project cannot be unbound while its links remain in the managed-links manifest.
 - Git projects receive exact managed entries in `.git/info/exclude`; unrelated exclude content and occupied user paths are never hidden or rewritten.

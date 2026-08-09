@@ -5,10 +5,16 @@ sources:
   mattpocock:
     type: git
     repo: https://github.com/mattpocock/skills.git
-
 projects: []
-
 skills:
+  manage-agent-skills:
+    source: local
+    path: skills/manage-agent-skills
+    enabled: true
+    targets:
+      - scope: global
+        agents:
+          - "*"
   herdr:
     source: herdr
     path: skills/herdr
