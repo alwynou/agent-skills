@@ -6,7 +6,7 @@ sources:
     type: git
     repo: https://github.com/mattpocock/skills.git
 projects:
-  - storehouse-manage-front
+  - cfpamf-front-storehouse-manage-front
 skills:
   manage-agent-skills:
     source: local
@@ -58,6 +58,6 @@ skills:
     enabled: true
     targets:
       - scope: project
-        project: storehouse-manage-front
+        project: cfpamf-front-storehouse-manage-front
         agents:
-          - kimi-code
+          - "*"

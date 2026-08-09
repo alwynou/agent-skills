@@ -113,8 +113,15 @@ describe("skill installation", () => {
     expect(installed.projectBinding).toEqual({ id: "owner-app", path: projectRoot });
     expect((await store.readRegistry()).skills.foo?.targets).toEqual([
       { scope: "global", agents: ["codex"] },
-      { scope: "project", project: "owner-app", agents: ["claude"] },
+      { scope: "project", project: "owner-app", agents: ["*"] },
     ]);
+    expect(installed.links.sort()).toEqual([
+      path.join(projectRoot, ".agents", "skills", "foo"),
+      path.join(projectRoot, ".claude", "skills", "foo"),
+    ].sort());
+    expect(await fs.realpath(path.join(projectRoot, ".agents", "skills", "foo"))).toBe(
+      await fs.realpath(path.join(root, "vendors", "upstream", "skills", "foo")),
+    );
     expect(await fs.realpath(path.join(projectRoot, ".claude", "skills", "foo"))).toBe(
       await fs.realpath(path.join(root, "vendors", "upstream", "skills", "foo")),
     );

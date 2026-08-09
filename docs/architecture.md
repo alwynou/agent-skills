@@ -14,16 +14,20 @@ The Vercel `skills` CLI is useful for discovery and ad-hoc installation. Its upd
 
 The manager has four distinct states:
 
-1. `registry/skills.yaml` declares sources, portable logical project names, skills, enablement, and explicit global/project agent targets.
+1. `registry/skills.yaml` declares sources, portable logical project names, skills, enablement, global Agent targets, and project-wide targets.
 2. `.skill-manager/lock.yaml` records the reviewed Git commit for each third-party source.
 3. `.skill-manager/projects.local.yaml` binds logical projects to absolute paths on one device and is not committed.
-4. `.skill-manager/managed-links.json` records only links created by this manager and is not committed.
+4. `.skill-manager/managed-links.json` records only links created by this manager, including every Agent consuming a shared link, and is not committed.
 
-Local sources live in `skills/`. Third-party Git worktrees live in `vendors/` and may be Git submodules. Agent adapters translate a resolved skill target into an agent-specific global or project installation path. The synchronizer creates symlinks and reconciles only links recorded in its private, versioned manifest.
+The managed-links manifest is version 3. Version 2 manifests are read as single-consumer records and rewritten as v3 on the next successful sync.
+
+Local sources live in `skills/`. Third-party Git worktrees live in `vendors/` and may be Git submodules. Agent adapters translate global targets into Agent-specific paths. Project targets are shared by every supported Agent: Codex, Kimi Code, Pi, and OpenCode consume `.agents/skills`, while Claude Code receives a `.claude/skills` compatibility link. The synchronizer merges consumers of the same path and reconciles only links recorded in its private, versioned manifest.
 
 New third-party sources are inspected in a temporary checkout before the registry is mutated, then added as Git submodules and pinned in the lock. A selective synchronization partitions the managed manifest by Skill: it reconciles the selected Skill while retaining all other link ownership and Git exclude entries unchanged.
 
-Every skill declares `targets`; there is no implicit global shorthand. Project paths never appear in the portable registry. Each device establishes its own absolute bindings with `project bind`, so cloning the registry on a machine with a different directory layout requires no repository edit.
+Every enabled skill declares at least one target; there is no implicit global shorthand. A disabled Skill may retain an empty target list after its final installation is removed, and reinstalling it adds a target and enables it. Project targets use `agents: ["*"]` because project Skills are intentionally cross-Agent. Project paths never appear in the portable registry. Each device establishes its own absolute bindings with `project bind`, so cloning the registry on a machine with a different directory layout requires no repository edit.
+
+`remove` changes desired installation state without deleting Skill content. `delete <skill>` removes the Skill from desired state and deletes content only when ownership is provable: a local Skill must be a clean, tracked, real directory under `skills/`, and a third-party vendor is removed only when no other registered Skill uses its source. `delete --source` is the explicit atomic boundary for removing a third-party source and all of its registered Skills. Selective sync accepts a now-missing Skill only for these reconciliation paths, so stale managed links and exact Git exclude entries can be cleaned while unrelated manifest state is preserved.
 
 ## Safety invariants
 
@@ -35,6 +39,9 @@ Every skill declares `targets`; there is no implicit global shorthand. Project p
 - Existing non-matching files, directories, and links are never overwritten.
 - Dry-run installation may fetch into a temporary directory but cannot modify registry, lock, submodules, bindings, links, or Git excludes.
 - Stale links are removed only when the on-disk symlink still matches the previously recorded target.
+- Removing or deleting a Skill preserves any link that a user has replaced and reports it as skipped.
+- Local deletion refuses symlinks, shared paths, paths outside `skills/`, dirty or untracked content, and the self-managing `manage-agent-skills` Skill.
+- Third-party source deletion refuses `local`, dirty vendors, missing vendors, and paths that are not tracked submodules under `vendors/`.
 - A project cannot be unbound while its links remain in the managed-links manifest.
 - Git projects receive exact managed entries in `.git/info/exclude`; unrelated exclude content and occupied user paths are never hidden or rewritten.
 - `check` runs fetch/read operations only.

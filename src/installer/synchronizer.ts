@@ -55,7 +55,7 @@ export class Synchronizer {
           const adapter = adapters.get(agent);
           if (!adapter) throw new UserError(`no adapter registered for ${agent}`);
           desired.push({
-            agent,
+            agents: [agent],
             skill: skill.name,
             scope: target.scope,
             ...(target.scope === "project"
@@ -77,13 +77,14 @@ export class Synchronizer {
       if (existing.targetPath !== link.targetPath || existing.scope !== link.scope || existing.projectId !== link.projectId) {
         throw new UserError(`${link.linkPath}: multiple skill targets resolve to the same link path`);
       }
+      existing.agents = [...new Set([...existing.agents, ...link.agents])];
     }
     return [...unique.values()];
   }
 
-  async sync(skills: ResolvedSkill[], selectedSkills?: ReadonlySet<string>): Promise<SyncResult> {
+  async sync(skills: ResolvedSkill[], selectedSkills?: ReadonlySet<string>, allowMissing = false): Promise<SyncResult> {
     const selected = selectedSkills ? skills.filter((skill) => selectedSkills.has(skill.name)) : skills;
-    if (selectedSkills && selected.length !== selectedSkills.size) {
+    if (selectedSkills && selected.length !== selectedSkills.size && !allowMissing) {
       const found = new Set(selected.map((skill) => skill.name));
       const missing = [...selectedSkills].filter((name) => !found.has(name));
       throw new UserError(`unknown skill ${missing.join(", ")}`);
@@ -131,7 +132,7 @@ export class Synchronizer {
     }
 
     await applyExcludes();
-    await this.store.writeManagedLinks({ version: 2, links: recorded });
+    await this.store.writeManagedLinks({ version: 3, links: recorded });
     return result;
   }
 }

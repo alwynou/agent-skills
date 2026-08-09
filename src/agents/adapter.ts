@@ -62,21 +62,21 @@ export class KimiCodeAdapter extends HomeAgentAdapter {
   readonly id = "kimi-code" as const;
   readonly name = "Kimi Code";
   readonly relativeDirectory = path.join(".kimi-code", "skills");
-  readonly projectRelativeDirectory = path.join(".kimi-code", "skills");
+  readonly projectRelativeDirectory = path.join(".agents", "skills");
 }
 
 export class PiAgentAdapter extends HomeAgentAdapter {
   readonly id = "pi-agent" as const;
   readonly name = "Pi Coding Agent";
   readonly relativeDirectory = path.join(".pi", "agent", "skills");
-  readonly projectRelativeDirectory = path.join(".pi", "skills");
+  readonly projectRelativeDirectory = path.join(".agents", "skills");
 }
 
 export class OpenCodeAdapter extends HomeAgentAdapter {
   readonly id = "opencode" as const;
   readonly name = "OpenCode";
   readonly relativeDirectory = path.join(".config", "opencode", "skills");
-  readonly projectRelativeDirectory = path.join(".opencode", "skills");
+  readonly projectRelativeDirectory = path.join(".agents", "skills");
 }
 
 export function builtInAdapters(home: string): AgentAdapter[] {

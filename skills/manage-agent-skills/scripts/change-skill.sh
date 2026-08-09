@@ -6,4 +6,4 @@ manager_root=$(CDPATH= cd -- "$script_dir/../../.." && pwd -P)
 workdir=$(pwd -P)
 
 cd "$manager_root"
-exec "$script_dir/run-with-node.sh" "$script_dir/install-skill.mjs" --workdir "$workdir" "$@"
+exec "$script_dir/run-with-node.sh" "$script_dir/change-skill.mjs" --workdir "$workdir" "$@"

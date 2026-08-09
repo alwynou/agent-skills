@@ -73,7 +73,7 @@ export interface ResolvedProject {
 }
 
 export interface ManagedLink {
-  agent: AgentId;
+  agents: AgentId[];
   skill: string;
   scope: "global" | "project";
   projectId?: string;
@@ -83,7 +83,7 @@ export interface ManagedLink {
 }
 
 export interface ManagedLinksFile {
-  version: 2;
+  version: 3;
   links: ManagedLink[];
 }
 
@@ -124,4 +124,39 @@ export interface InstallSkillPlan {
   localChanges: string[];
   links: string[];
   applied: boolean;
+}
+
+export interface RemoveSkillRequest {
+  skillName: string;
+  scope?: "global" | "project";
+  agents?: Array<AgentId | "*">;
+  projectId?: string;
+  all: boolean;
+  dryRun: boolean;
+  sync: boolean;
+}
+
+export interface DeleteSkillRequest {
+  skillName?: string;
+  sourceId?: string;
+  dryRun: boolean;
+  sync: boolean;
+}
+
+export interface SkillRemovalPlan {
+  action: "remove" | "delete" | "delete-source";
+  skills: string[];
+  sourceId: string | null;
+  target: SkillTargetConfig | "all" | null;
+  trackedChanges: string[];
+  links: string[];
+  retainedSource: boolean;
+  noOp: boolean;
+  applied: boolean;
+  syncResult: {
+    created: string[];
+    removed: string[];
+    unchanged: string[];
+    skipped: string[];
+  } | null;
 }

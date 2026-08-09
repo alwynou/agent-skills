@@ -108,7 +108,7 @@ skills:
           - "*"
 ```
 
-Every skill uses explicit `targets`. A skill can be global, project-scoped, installed in multiple projects, or installed at both scopes.
+Every skill uses explicit `targets`. A skill can be global, project-scoped, installed in multiple projects, or installed at both scopes. Global targets select individual Agents. Project targets must use `agents: ["*"]`: the manager creates one shared `.agents/skills/<name>` link plus a `.claude/skills/<name>` compatibility link, making the Skill available to every supported Agent in that project. A disabled Skill may have `targets: []`; this is the retained state after its final installation target is removed.
 
 The registry stores portable logical project names, never machine paths. Bind each project once on every device; relative CLI paths are resolved to absolute paths before being stored in the ignored `.skill-manager/projects.local.yaml` file:
 
@@ -141,7 +141,13 @@ Every registered skill directory must contain `SKILL.md`. Registry paths are con
 ```bash
 agent-skills list
 agent-skills sync [--skill <name>]
-agent-skills install <skill> --scope <global|project> --agents <agent|*> [options]
+agent-skills install <skill> --scope global --agents <agent|*> [options]
+agent-skills install <skill> --scope project --project <id> --project-path <path> [options]
+agent-skills remove <skill> --scope global --agents <agent|*> [--dry-run] [--json] [--no-sync]
+agent-skills remove <skill> --scope project --project <id> [--dry-run] [--json] [--no-sync]
+agent-skills remove <skill> --all [--dry-run] [--json] [--no-sync]
+agent-skills delete <skill> [--dry-run] [--json] [--no-sync]
+agent-skills delete --source <source-id> [--dry-run] [--json] [--no-sync]
 agent-skills doctor
 agent-skills check [source]
 agent-skills diff <source>
@@ -156,6 +162,9 @@ agent-skills project unbind <project>
 - `list` shows one row per resolved target, including scope, project, agents, and source path.
 - `sync` reconciles symlinks for enabled skills. `--skill` limits reconciliation to one Skill while preserving every other managed link.
 - `install` registers or extends a Skill target, optionally imports and pins a new Git source, and supports mutation-free `--dry-run --json` planning.
+- `remove` deletes matching target records and their managed links while retaining the Skill; removing its final target disables it.
+- `delete <skill>` removes the Skill record, all of its managed links, and owned local content. An exclusive third-party source is removed too, while a source shared by other registered Skills is retained.
+- `delete --source <id>` explicitly removes a third-party source, every Skill registered from it, its lock, submodule, vendor checkout, links, and managed Git exclude entries. It refuses `local` and dirty vendors.
 - `doctor` validates registry/lock files, projects, sources, `SKILL.md` files, commits, links, and managed Git excludes.
 - `check` fetches remote refs and reports candidates without changing working trees or locks.
 - `diff` shows changes between the locked and upstream candidate commit, scoped to relevant skill paths.
@@ -184,7 +193,7 @@ agent-skills install example \
   --project-path /absolute/path/to/app
 ```
 
-The bundled `manage-agent-skills` Skill discovers sources, asks for confirmation before pulling name-only matches, invokes this interface, and publishes tracked registry changes from a feature branch as a Draft PR.
+The bundled `manage-agent-skills` Skill discovers sources, asks for confirmation before pulling name-only matches, invokes this interface, and publishes tracked install, remove, or delete changes from a feature branch as a Draft PR.
 
 ## Installation destinations
 
@@ -194,9 +203,9 @@ The built-in adapters use:
 | --- | --- | --- |
 | Codex | `~/.agents/skills` | `.agents/skills` |
 | Claude Code | `~/.claude/skills` | `.claude/skills` |
-| Kimi Code | `~/.kimi-code/skills` | `.kimi-code/skills` |
-| Pi Coding Agent | `~/.pi/agent/skills` | `.pi/skills` |
-| OpenCode | `~/.config/opencode/skills` | `.opencode/skills` |
+| Kimi Code | `~/.kimi-code/skills` | `.agents/skills` |
+| Pi Coding Agent | `~/.pi/agent/skills` | `.agents/skills` |
+| OpenCode | `~/.config/opencode/skills` | `.agents/skills` |
 
 For safe experiments and automated tests, redirect all adapters:
 

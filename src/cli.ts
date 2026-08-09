@@ -7,16 +7,24 @@ import { NodeFs } from "./core/fs.js";
 import { GitClient } from "./git/client.js";
 import { RegistryStore } from "./registry/store.js";
 import { errorMessage, UserError } from "./core/errors.js";
-import { agentIds, type AgentId, type InstallSkillRequest } from "./core/types.js";
+import { agentIds, type AgentId, type DeleteSkillRequest, type InstallSkillRequest, type RemoveSkillRequest } from "./core/types.js";
 
 const help = `agent-skills — declarative Agent Skill manager
 
 Usage:
   agent-skills [--root <path>] list
   agent-skills [--root <path>] sync [--skill <name>]
-  agent-skills [--root <path>] install <skill> --scope <global|project> --agents <agent|*>
+  agent-skills [--root <path>] install <skill> --scope global --agents <agent|*>
     [--repo <url> --source-id <id> --path <skill-path> --ref <ref>]
-    [--project <id> --project-path <path>] [--dry-run] [--json] [--no-sync]
+    [--dry-run] [--json] [--no-sync]
+  agent-skills [--root <path>] install <skill> --scope project --project <id> --project-path <path>
+    [--repo <url> --source-id <id> --path <skill-path> --ref <ref>]
+    [--dry-run] [--json] [--no-sync]
+  agent-skills [--root <path>] remove <skill> --scope global --agents <agent|*> [--dry-run] [--json] [--no-sync]
+  agent-skills [--root <path>] remove <skill> --scope project --project <id> [--dry-run] [--json] [--no-sync]
+  agent-skills [--root <path>] remove <skill> --all [--dry-run] [--json] [--no-sync]
+  agent-skills [--root <path>] delete <skill> [--dry-run] [--json] [--no-sync]
+  agent-skills [--root <path>] delete --source <id> [--dry-run] [--json] [--no-sync]
   agent-skills [--root <path>] doctor
   agent-skills [--root <path>] check [source]
   agent-skills [--root <path>] diff <source>
@@ -84,8 +92,8 @@ function parseOptions(args: string[], booleanNames: string[] = []): { values: Ma
   return { values, flags };
 }
 
-function parseAgents(value: string | undefined): Array<AgentId | "*"> {
-  if (!value) throw new UserError("install requires --agents");
+function parseAgents(value: string | undefined, command = "install"): Array<AgentId | "*"> {
+  if (!value) throw new UserError(`${command} requires --agents`);
   const agents = value.split(",").filter(Boolean);
   if (agents.length === 0 || agents.some((agent) => agent !== "*" && !agentIds.includes(agent as AgentId))) {
     throw new UserError(`unsupported agents ${value}`);
@@ -119,13 +127,13 @@ async function main(): Promise<void> {
       }
       console.table(
         skills.flatMap((skill) =>
-          skill.targets.map((target) => ({
+          (skill.targets.length > 0 ? skill.targets : [null]).map((target) => ({
             name: skill.name,
             source: skill.sourceId,
             enabled: skill.enabled ? "yes" : "no",
-            scope: target.scope,
-            project: target.scope === "project" ? target.projectId : "-",
-            agents: target.agents.join(","),
+            scope: target?.scope ?? "-",
+            project: target?.scope === "project" ? target.projectId : "-",
+            agents: target?.agents.join(",") ?? "-",
             path: path.relative(root, skill.absolutePath),
           })),
         ),
@@ -147,10 +155,13 @@ async function main(): Promise<void> {
       for (const name of options.values.keys()) if (!allowed.has(name)) throw new UserError(`unknown install option ${name}`);
       const scope = options.values.get("--scope");
       if (scope !== "global" && scope !== "project") throw new UserError("install requires --scope global or project");
+      if (scope === "project" && options.values.has("--agents") && options.values.get("--agents") !== "*") {
+        throw new UserError("project Skills are shared; omit --agents or use --agents *");
+      }
       const request: InstallSkillRequest = {
         skillName,
         scope,
-        agents: parseAgents(options.values.get("--agents")),
+        agents: scope === "project" ? ["*"] : parseAgents(options.values.get("--agents")),
         ...(options.values.get("--repo") ? { repo: options.values.get("--repo") as string } : {}),
         ...(options.values.get("--source-id") ? { sourceId: options.values.get("--source-id") as string } : {}),
         ...(options.values.get("--path") ? { skillPath: options.values.get("--path") as string } : {}),
@@ -163,6 +174,43 @@ async function main(): Promise<void> {
       const plan = await manager.install(request);
       if (options.flags.has("--json")) console.log(JSON.stringify(plan, null, 2));
       else console.log(`${plan.skill}: ${plan.applied ? "installed" : "planned"} ${plan.target.scope} target (${plan.links.length} link(s))`);
+      return;
+    }
+    case "remove": {
+      const skillName = requireOperand(command, operands);
+      const options = parseOptions(operands.slice(1), ["--all", "--dry-run", "--json", "--no-sync"]);
+      const allowed = new Set(["--scope", "--agents", "--project"]);
+      for (const name of options.values.keys()) if (!allowed.has(name)) throw new UserError(`unknown remove option ${name}`);
+      const scope = options.values.get("--scope");
+      if (scope !== undefined && scope !== "global" && scope !== "project") throw new UserError("remove --scope must be global or project");
+      const request: RemoveSkillRequest = {
+        skillName,
+        ...(scope ? { scope } : {}),
+        ...(options.values.has("--agents") ? { agents: parseAgents(options.values.get("--agents"), "remove") } : {}),
+        ...(options.values.has("--project") ? { projectId: options.values.get("--project") as string } : {}),
+        all: options.flags.has("--all"),
+        dryRun: options.flags.has("--dry-run"),
+        sync: !options.flags.has("--no-sync"),
+      };
+      const plan = await manager.remove(request);
+      if (options.flags.has("--json")) console.log(JSON.stringify(plan, null, 2));
+      else console.log(plan.noOp ? `${skillName}: no matching target` : `${skillName}: ${plan.applied ? "removed" : "planned"}`);
+      return;
+    }
+    case "delete": {
+      const first = operands[0];
+      const hasSkillName = Boolean(first && !first.startsWith("--"));
+      const options = parseOptions(operands.slice(hasSkillName ? 1 : 0), ["--dry-run", "--json", "--no-sync"]);
+      for (const name of options.values.keys()) if (name !== "--source") throw new UserError(`unknown delete option ${name}`);
+      const request: DeleteSkillRequest = {
+        ...(hasSkillName ? { skillName: first as string } : {}),
+        ...(options.values.has("--source") ? { sourceId: options.values.get("--source") as string } : {}),
+        dryRun: options.flags.has("--dry-run"),
+        sync: !options.flags.has("--no-sync"),
+      };
+      const plan = await manager.delete(request);
+      if (options.flags.has("--json")) console.log(JSON.stringify(plan, null, 2));
+      else console.log(`${plan.skills.join(",") || plan.sourceId}: ${plan.applied ? "deleted" : "planned"}`);
       return;
     }
     case "doctor": {

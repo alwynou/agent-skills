@@ -119,7 +119,7 @@ export class ProjectExcluder {
         const patterns =
           parsed.begin === undefined ? [] : parsed.lines.slice(parsed.begin + 1, parsed.end as number);
         if (!patterns.includes(info.pattern)) {
-          issues.push(`${link.agent}/${link.projectId}/${link.skill}: Git exclude entry is missing`);
+          issues.push(`${link.agents.join("+")}/${link.projectId}/${link.skill}: Git exclude entry is missing`);
         }
       } catch (error) {
         issues.push((error as Error).message);

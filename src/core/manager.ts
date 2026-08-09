@@ -2,7 +2,7 @@ import path from "node:path";
 import { builtInAdapters, type AgentAdapter } from "../agents/adapter.js";
 import type { FsPort } from "./fs.js";
 import { pathExists } from "./fs.js";
-import type { Diagnostic, InstallSkillPlan, InstallSkillRequest, RegistryConfig, ResolvedProject, ResolvedSkill, SkillTargetConfig, UpdateInfo } from "./types.js";
+import { agentIds, type DeleteSkillRequest, type Diagnostic, type InstallSkillPlan, type InstallSkillRequest, type RegistryConfig, type RemoveSkillRequest, type ResolvedProject, type ResolvedSkill, type SkillRemovalPlan, type SkillTargetConfig, type UpdateInfo } from "./types.js";
 import type { ProjectPaths } from "./paths.js";
 import type { RegistryStore } from "../registry/store.js";
 import { resolveProjects, resolveSkills } from "../registry/resolve.js";
@@ -68,6 +68,200 @@ export class SkillManager {
       await this.list(),
       skillName ? new Set([skillName]) : undefined,
     );
+  }
+
+  private async reconcileRemoved(registry: RegistryConfig, skillNames: string[]): Promise<SyncResult> {
+    const bindings = await this.store.readProjectBindings();
+    const skills = resolveSkills(registry, this.paths, bindings);
+    return new Synchronizer(this.fs, this.store, this.adapters, this.git).sync(
+      skills,
+      new Set(skillNames),
+      true,
+    );
+  }
+
+  private async managedLinkPaths(skillNames: ReadonlySet<string>, predicate?: (link: Awaited<ReturnType<RegistryStore["readManagedLinks"]>>["links"][number]) => boolean): Promise<string[]> {
+    const managed = await this.store.readManagedLinks();
+    return managed.links
+      .filter((link) => skillNames.has(link.skill) && (!predicate || predicate(link)))
+      .map((link) => link.linkPath);
+  }
+
+  async remove(request: RemoveSkillRequest): Promise<SkillRemovalPlan> {
+    const registry = structuredClone(await this.store.readRegistry());
+    const skill = registry.skills[request.skillName];
+    if (!skill) throw new UserError(`unknown skill ${request.skillName}`);
+    if (!request.all && !request.scope) throw new UserError("remove requires --all or --scope global|project");
+    if (request.all && (request.scope || request.agents || request.projectId)) {
+      throw new UserError("--all cannot be combined with scope, agents, or project");
+    }
+
+    let changed = false;
+    let target: SkillRemovalPlan["target"] = "all";
+    let linkPredicate: ((link: Awaited<ReturnType<RegistryStore["readManagedLinks"]>>["links"][number]) => boolean) | undefined;
+    if (request.all) {
+      changed = skill.targets.length > 0;
+      skill.targets = [];
+    } else if (request.scope === "project") {
+      if (!request.projectId) throw new UserError("project removal requires --project");
+      if (request.agents) throw new UserError("--agents is not allowed for project removal");
+      target = { scope: "project", project: request.projectId, agents: ["*"] };
+      const before = skill.targets.length;
+      skill.targets = skill.targets.filter((candidate) => candidate.scope !== "project" || candidate.project !== request.projectId);
+      changed = skill.targets.length !== before;
+      linkPredicate = (link) => link.scope === "project" && link.projectId === request.projectId;
+    } else {
+      if (!request.agents || request.agents.length === 0) throw new UserError("global removal requires --agents");
+      if (request.projectId) throw new UserError("--project is not allowed for global removal");
+      const requested = new Set(request.agents.includes("*") ? agentIds : request.agents.filter((agent) => agent !== "*"));
+      target = { scope: "global", agents: request.agents };
+      const nextTargets: SkillTargetConfig[] = [];
+      for (const candidate of skill.targets) {
+        if (candidate.scope !== "global") {
+          nextTargets.push(candidate);
+          continue;
+        }
+        const existing = candidate.agents.includes("*") ? [...agentIds] : candidate.agents.filter((agent) => agent !== "*");
+        const remaining = existing.filter((agent) => !requested.has(agent));
+        if (remaining.length !== existing.length) changed = true;
+        if (remaining.length > 0) nextTargets.push({ scope: "global", agents: remaining });
+      }
+      skill.targets = nextTargets;
+      linkPredicate = (link) => link.scope === "global" && link.agents.some((agent) => requested.has(agent));
+    }
+
+    if (!changed) {
+      return {
+        action: "remove", skills: [request.skillName], sourceId: null, target,
+        trackedChanges: [], links: [], retainedSource: true, noOp: true, applied: false, syncResult: null,
+      };
+    }
+    if (skill.targets.length === 0) skill.enabled = false;
+    validateRegistry(registry);
+    const links = await this.managedLinkPaths(new Set([request.skillName]), linkPredicate);
+    if (request.dryRun) {
+      return {
+        action: "remove", skills: [request.skillName], sourceId: null, target,
+        trackedChanges: [path.relative(this.paths.root, this.paths.registry)], links,
+        retainedSource: true, noOp: false, applied: false, syncResult: null,
+      };
+    }
+    const syncResult = request.sync ? await this.reconcileRemoved(registry, [request.skillName]) : null;
+    await this.store.writeRegistry(registry);
+    return {
+      action: "remove", skills: [request.skillName], sourceId: null, target,
+      trackedChanges: [path.relative(this.paths.root, this.paths.registry)], links,
+      retainedSource: true, noOp: false, applied: true, syncResult,
+    };
+  }
+
+  private async trackedFiles(relativePath: string): Promise<string[]> {
+    const output = await this.git.run(this.paths.root, ["ls-files", "--", relativePath]);
+    return output ? output.split("\n") : [];
+  }
+
+  private async preflightLocalSkillDelete(registry: RegistryConfig, skillName: string): Promise<{ relativePath: string; trackedFiles: string[] }> {
+    if (skillName === "manage-agent-skills") throw new UserError("manage-agent-skills cannot delete itself");
+    const skill = registry.skills[skillName] as NonNullable<RegistryConfig["skills"][string]>;
+    const skillsRoot = path.resolve(this.paths.root, "skills");
+    const absolutePath = path.resolve(this.paths.root, skill.path);
+    if (!absolutePath.startsWith(`${skillsRoot}${path.sep}`)) throw new UserError(`local skill ${skillName} must be inside ${skillsRoot} to be deleted`);
+    const stat = await this.fs.lstat(absolutePath);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new UserError(`local skill ${skillName} must be a real directory`);
+    const shared = Object.entries(registry.skills).find(([name, candidate]) =>
+      name !== skillName && candidate.source === "local" && path.resolve(this.paths.root, candidate.path) === absolutePath,
+    );
+    if (shared) throw new UserError(`local skill path is also used by ${shared[0]}`);
+    const relativePath = path.relative(this.paths.root, absolutePath);
+    const status = await this.git.run(this.paths.root, ["status", "--porcelain", "--untracked-files=all", "--ignored=matching", "--", relativePath]);
+    if (status) throw new UserError(`local skill ${skillName} has modified or untracked content`);
+    const trackedFiles = await this.trackedFiles(relativePath);
+    if (trackedFiles.length === 0) throw new UserError(`local skill ${skillName} has no tracked files`);
+    await this.git.run(this.paths.root, ["rm", "--dry-run", "-r", "--", relativePath]);
+    return { relativePath, trackedFiles };
+  }
+
+  private async preflightSourceDelete(registry: RegistryConfig, sourceId: string): Promise<{ vendorPath: string }> {
+    const source = registry.sources[sourceId];
+    if (!source) throw new UserError(`unknown source ${sourceId}`);
+    const vendorPath = path.join("vendors", source.path ?? sourceId);
+    const absolutePath = path.resolve(this.paths.root, vendorPath);
+    if (!absolutePath.startsWith(`${path.resolve(this.paths.vendors)}${path.sep}`)) throw new UserError(`source ${sourceId} escapes vendors`);
+    if (!(await pathExists(this.fs, absolutePath))) throw new UserError(`source ${sourceId} vendor is missing: ${absolutePath}`);
+    const status = await this.git.run(absolutePath, ["status", "--porcelain", "--untracked-files=all", "--ignored=matching"]);
+    if (status) throw new UserError(`source ${sourceId} vendor is dirty`);
+    const stage = await this.git.run(this.paths.root, ["ls-files", "--stage", "--", vendorPath]);
+    if (!stage.startsWith("160000 ")) throw new UserError(`source ${sourceId} is not a tracked submodule at ${vendorPath}`);
+    await this.git.run(this.paths.root, ["rm", "--dry-run", "--", vendorPath]);
+    return { vendorPath };
+  }
+
+  async delete(request: DeleteSkillRequest): Promise<SkillRemovalPlan> {
+    if ((request.skillName ? 1 : 0) + (request.sourceId ? 1 : 0) !== 1) {
+      throw new UserError("delete requires exactly one skill name or --source");
+    }
+    const registry = structuredClone(await this.store.readRegistry());
+    const lock = structuredClone(await this.store.readLock());
+    let action: SkillRemovalPlan["action"] = "delete";
+    let skillNames: string[];
+    let sourceId: string | null = request.sourceId ?? null;
+    let retainedSource = false;
+    let localDelete: { relativePath: string; trackedFiles: string[] } | null = null;
+    let sourceDelete: { vendorPath: string } | null = null;
+
+    if (request.sourceId) {
+      if (request.sourceId === "local") throw new UserError("local is not a deletable source");
+      action = "delete-source";
+      skillNames = Object.entries(registry.skills).filter(([, skill]) => skill.source === request.sourceId).map(([name]) => name);
+      sourceDelete = await this.preflightSourceDelete(registry, request.sourceId);
+      for (const name of skillNames) delete registry.skills[name];
+      delete registry.sources[request.sourceId];
+      delete lock.sources[request.sourceId];
+    } else {
+      const skillName = request.skillName as string;
+      const skill = registry.skills[skillName];
+      if (!skill) throw new UserError(`unknown skill ${skillName}`);
+      skillNames = [skillName];
+      sourceId = skill.source === "local" ? null : skill.source;
+      if (skill.source === "local") {
+        localDelete = await this.preflightLocalSkillDelete(registry, skillName);
+      } else {
+        const otherUsers = Object.entries(registry.skills).filter(([name, candidate]) => name !== skillName && candidate.source === skill.source);
+        if (otherUsers.length > 0) {
+          retainedSource = true;
+        } else {
+          sourceDelete = await this.preflightSourceDelete(registry, skill.source);
+          delete registry.sources[skill.source];
+          delete lock.sources[skill.source];
+        }
+      }
+      delete registry.skills[skillName];
+    }
+
+    validateRegistry(registry);
+    const trackedChanges = new Set<string>([path.relative(this.paths.root, this.paths.registry)]);
+    if (localDelete) for (const file of localDelete.trackedFiles) trackedChanges.add(file);
+    if (sourceDelete) {
+      trackedChanges.add(".gitmodules");
+      trackedChanges.add(path.relative(this.paths.root, this.paths.lock));
+      trackedChanges.add(sourceDelete.vendorPath);
+    }
+    const links = await this.managedLinkPaths(new Set(skillNames));
+    if (request.dryRun) {
+      return {
+        action, skills: skillNames, sourceId, target: null, trackedChanges: [...trackedChanges], links,
+        retainedSource, noOp: false, applied: false, syncResult: null,
+      };
+    }
+    const syncResult = request.sync ? await this.reconcileRemoved(registry, skillNames) : null;
+    if (localDelete) await this.git.run(this.paths.root, ["rm", "-r", "--", localDelete.relativePath]);
+    if (sourceDelete) await this.git.run(this.paths.root, ["rm", "--", sourceDelete.vendorPath]);
+    await this.store.writeRegistry(registry);
+    if (sourceDelete) await this.store.writeLock(lock);
+    return {
+      action, skills: skillNames, sourceId, target: null, trackedChanges: [...trackedChanges], links,
+      retainedSource, noOp: false, applied: true, syncResult,
+    };
   }
 
   async install(request: InstallSkillRequest): Promise<InstallSkillPlan> {
@@ -141,7 +335,7 @@ export class SkillManager {
       if (otherBinding) throw new UserError(`project path is already bound to ${otherBinding[0]}`);
       bindings.projects[request.projectId] = { path: projectRoot };
       projectBinding = { id: request.projectId, path: projectRoot };
-      target = { scope: "project", project: request.projectId, agents: request.agents };
+      target = { scope: "project", project: request.projectId, agents: ["*"] };
     } else {
       if (request.projectId || request.projectPath) throw new UserError("project options are not allowed for global scope");
       target = { scope: "global", agents: request.agents };
@@ -178,13 +372,14 @@ export class SkillManager {
 
     const resolvedTarget = request.scope === "global"
       ? { scope: "global" as const, agents: request.agents.includes("*") ? this.adapters.map((adapter) => adapter.id) : request.agents.filter((agent) => agent !== "*") }
-      : { scope: "project" as const, projectId: request.projectId as string, projectRoot: projectBinding?.path ?? null, agents: request.agents.includes("*") ? this.adapters.map((adapter) => adapter.id) : request.agents.filter((agent) => agent !== "*") };
+      : { scope: "project" as const, projectId: request.projectId as string, projectRoot: projectBinding?.path ?? null, agents: this.adapters.map((adapter) => adapter.id) };
     const fakeSkill: ResolvedSkill = { name: request.skillName, sourceId, absolutePath: "", enabled: true, targets: [resolvedTarget] };
-    const links = await Promise.all(resolvedTarget.agents.map(async (agent) => {
+    const resolvedLinks = await Promise.all(resolvedTarget.agents.map(async (agent) => {
       const adapter = this.adapters.find((candidate) => candidate.id === agent);
       if (!adapter) throw new UserError(`no adapter registered for ${agent}`);
       return adapter.linkPath(fakeSkill, resolvedTarget);
     }));
+    const links = [...new Set(resolvedLinks)];
 
     if (!request.dryRun) {
       if (sourceAdded) {
@@ -286,8 +481,9 @@ export class SkillManager {
     }
     const correctProjectLinks = [];
     for (const link of desired) {
+      const consumers = link.agents.join("+");
       const label =
-        link.scope === "project" ? `${link.agent}/${link.projectId}/${link.skill}` : `${link.agent}/${link.skill}`;
+        link.scope === "project" ? `${consumers}/${link.projectId}/${link.skill}` : `${consumers}/${link.skill}`;
       if (!(await pathExists(this.fs, link.linkPath))) {
         diagnostics.push({ level: "warning", message: `${label}: link is missing` });
       } else {
@@ -357,6 +553,7 @@ export class SkillManager {
     const registry = await this.store.readRegistry();
     const skill = registry.skills[skillName];
     if (!skill) throw new UserError(`unknown skill ${skillName}`);
+    if (enabled && skill.targets.length === 0) throw new UserError(`skill ${skillName} has no targets; install it before enabling`);
     skill.enabled = enabled;
     await this.store.writeRegistry(registry);
   }

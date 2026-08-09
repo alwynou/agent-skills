@@ -68,8 +68,9 @@ export function validateRegistry(value: unknown): RegistryConfig {
     if (typeof candidate.enabled !== "boolean") {
       throw new UserError(`skill ${name}.enabled must be a boolean`);
     }
-    if (!Array.isArray(candidate.targets) || candidate.targets.length === 0) {
-      throw new UserError(`skill ${name}.targets must be a non-empty list`);
+    if (!Array.isArray(candidate.targets)) throw new UserError(`skill ${name}.targets must be a list`);
+    if (candidate.targets.length === 0 && candidate.enabled) {
+      throw new UserError(`skill ${name} with no targets must be disabled`);
     }
     const targets: SkillTargetConfig[] = candidate.targets.map((target, index) => {
       const label = `skill ${name}.targets[${index}]`;
@@ -82,7 +83,10 @@ export function validateRegistry(value: unknown): RegistryConfig {
       if (target.scope === "project") {
         const project = requiredString(target.project, `${label}.project`);
         if (!projects.includes(project)) throw new UserError(`${label} references unknown project ${project}`);
-        return { scope: "project", project, agents: targetAgents };
+        if (targetAgents.length !== 1 || targetAgents[0] !== "*") {
+          throw new UserError(`${label}.agents must be ["*"] because project Skills are shared by all supported agents`);
+        }
+        return { scope: "project", project, agents: ["*"] };
       }
       throw new UserError(`${label}.scope must be global or project`);
     });
