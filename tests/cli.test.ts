@@ -23,14 +23,12 @@ describe("CLI", () => {
     await execFileAsync("git", ["-C", path.join(root, "app"), "init", "--quiet"]);
     await fs.writeFile(path.join(root, "skills", "example", "SKILL.md"), "---\nname: example\ndescription: test\n---\n");
     await fs.writeFile(path.join(root, ".skill-manager", "lock.yaml"), "sources: {}\n");
-    await fs.writeFile(path.join(root, ".skill-manager", "managed-links.json"), '{"version":1,"links":[]}\n');
     await fs.writeFile(
       path.join(root, "registry", "skills.yaml"),
       [
         "sources: {}",
         "projects:",
-        "  app:",
-        "    path: app",
+        "  - app",
         "skills:",
         "  example:",
         "    source: local",
@@ -55,6 +53,16 @@ describe("CLI", () => {
     expect(stdout).toContain("'app'");
 
     const environment = { ...process.env, AGENT_SKILLS_HOME: path.join(root, "home") };
+    const beforeBind = await execFileAsync(executable, ["src/cli.ts", "--root", root, "project", "list"], {
+      cwd: path.resolve("."),
+      env: environment,
+    });
+    expect(beforeBind.stdout).toContain("'unbound'");
+    await execFileAsync(executable, ["src/cli.ts", "--root", root, "project", "bind", "app", path.join(root, "app")], {
+      cwd: path.resolve("."),
+      env: environment,
+    });
+    expect(await fs.readFile(path.join(root, ".skill-manager", "projects.local.yaml"), "utf8")).toContain(path.join(root, "app"));
     await execFileAsync(executable, ["src/cli.ts", "--root", root, "sync"], {
       cwd: path.resolve("."),
       env: environment,
@@ -68,5 +76,14 @@ describe("CLI", () => {
     expect(await fs.readFile(path.join(root, "app", ".git", "info", "exclude"), "utf8")).toContain(
       "/.claude/skills/example",
     );
+
+    await expect(execFileAsync(executable, ["src/cli.ts", "--root", root, "project", "unbind", "app"], {
+      cwd: path.resolve("."),
+      env: environment,
+    })).rejects.toMatchObject({ stderr: expect.stringContaining("still has managed links") });
+    await execFileAsync(executable, ["src/cli.ts", "--root", root, "disable", "example"], { cwd: path.resolve("."), env: environment });
+    await execFileAsync(executable, ["src/cli.ts", "--root", root, "sync"], { cwd: path.resolve("."), env: environment });
+    await execFileAsync(executable, ["src/cli.ts", "--root", root, "project", "unbind", "app"], { cwd: path.resolve("."), env: environment });
+    expect(await fs.readFile(path.join(root, ".skill-manager", "projects.local.yaml"), "utf8")).not.toContain(path.join(root, "app"));
   });
 });

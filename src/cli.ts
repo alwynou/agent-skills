@@ -19,6 +19,9 @@ Usage:
   agent-skills [--root <path>] update <source>
   agent-skills [--root <path>] enable <skill>
   agent-skills [--root <path>] disable <skill>
+  agent-skills [--root <path>] project list
+  agent-skills [--root <path>] project bind <project> <path>
+  agent-skills [--root <path>] project unbind <project>
 
 Environment:
   AGENT_SKILLS_ROOT  Registry repository root
@@ -36,7 +39,7 @@ function findRoot(start: string): string {
   throw new UserError("could not find registry/skills.yaml; pass --root or set AGENT_SKILLS_ROOT");
 }
 
-function parseArguments(argv: string[]): { root: string; command: string; operand?: string } {
+function parseArguments(argv: string[]): { root: string; command: string; operands: string[] } {
   const args = [...argv];
   let explicitRoot = process.env.AGENT_SKILLS_ROOT;
   const rootIndex = args.indexOf("--root");
@@ -46,18 +49,19 @@ function parseArguments(argv: string[]): { root: string; command: string; operan
     explicitRoot = value;
     args.splice(rootIndex, 2);
   }
-  if (args[0] === "--help" || args[0] === "-h") return { root: process.cwd(), command: "help" };
+  if (args[0] === "--help" || args[0] === "-h") return { root: process.cwd(), command: "help", operands: [] };
   const command = args[0] ?? "help";
-  return { root: explicitRoot ? path.resolve(explicitRoot) : findRoot(process.cwd()), command, ...(args[1] ? { operand: args[1] } : {}) };
+  return { root: explicitRoot ? path.resolve(explicitRoot) : findRoot(process.cwd()), command, operands: args.slice(1) };
 }
 
-function requireOperand(command: string, operand?: string): string {
-  if (!operand) throw new UserError(`${command} requires a name`);
+function requireOperand(command: string, operands: string[], index = 0): string {
+  const operand = operands[index];
+  if (!operand) throw new UserError(`${command} requires ${index === 0 ? "a name" : "another argument"}`);
   return operand;
 }
 
 async function main(): Promise<void> {
-  const { root, command, operand } = parseArguments(process.argv.slice(2));
+  const { root, command, operands } = parseArguments(process.argv.slice(2));
   if (command === "help") {
     console.log(help);
     return;
@@ -111,7 +115,7 @@ async function main(): Promise<void> {
       return;
     }
     case "check": {
-      const updates = await manager.check(operand);
+      const updates = await manager.check(operands[0]);
       if (updates.length === 0) console.log("No git sources registered.");
       for (const update of updates) {
         const status = update.current === update.candidate ? "up to date" : `${update.behind ?? "?"} commit(s) behind`;
@@ -120,18 +124,40 @@ async function main(): Promise<void> {
       return;
     }
     case "diff":
-      console.log((await manager.diff(requireOperand(command, operand))) || "No relevant changes.");
+      console.log((await manager.diff(requireOperand(command, operands))) || "No relevant changes.");
       return;
     case "update": {
-      const update = await manager.update(requireOperand(command, operand));
+      const update = await manager.update(requireOperand(command, operands));
       console.log(`${update.source}: updated to ${update.candidate}`);
       return;
     }
     case "enable":
     case "disable": {
-      const skill = requireOperand(command, operand);
+      const skill = requireOperand(command, operands);
       await manager.setEnabled(skill, command === "enable");
       console.log(`${skill}: ${command}d; run agent-skills sync to apply`);
+      return;
+    }
+    case "project": {
+      const action = requireOperand("project", operands);
+      if (action === "list") {
+        const projects = await manager.listProjects();
+        if (projects.length === 0) console.log("No projects registered.");
+        else console.table(projects.map((project) => ({ project: project.id, status: project.root ? "bound" : "unbound", path: project.root ?? "-" })));
+        return;
+      }
+      if (action !== "bind" && action !== "unbind") throw new UserError(`unknown project command ${action}`);
+      const projectId = requireOperand(`project ${action}`, operands, 1);
+      if (action === "bind") {
+        const projectPath = requireOperand("project bind", operands, 2);
+        console.log(`${projectId}: bound to ${await manager.bindProject(projectId, projectPath)}`);
+        return;
+      }
+      if (action === "unbind") {
+        await manager.unbindProject(projectId);
+        console.log(`${projectId}: unbound`);
+        return;
+      }
       return;
     }
     default:

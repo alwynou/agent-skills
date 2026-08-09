@@ -1,5 +1,5 @@
 import path from "node:path";
-import { agentIds, type RegistryConfig, type ResolvedSkill, type ResolvedSkillTarget } from "../core/types.js";
+import { agentIds, type ProjectBindingsConfig, type RegistryConfig, type ResolvedProject, type ResolvedSkill, type ResolvedSkillTarget } from "../core/types.js";
 import type { ProjectPaths } from "../core/paths.js";
 import { UserError } from "../core/errors.js";
 
@@ -12,29 +12,43 @@ function safeJoin(root: string, relativePath: string, label: string): string {
   return resolved;
 }
 
-export function resolveSkills(registry: RegistryConfig, paths: ProjectPaths): ResolvedSkill[] {
-  const projectRoots = new Map<string, string>();
+export function resolveProjects(
+  registry: RegistryConfig,
+  bindings: ProjectBindingsConfig,
+): ResolvedProject[] {
+  const resolved: ResolvedProject[] = [];
   const projectIdsByRoot = new Map<string, string>();
-  for (const [id, project] of Object.entries(registry.projects)) {
-    const root = path.resolve(paths.root, project.path);
+  for (const id of registry.projects) {
+    const localPath = bindings.projects[id]?.path;
+    if (!localPath) {
+      resolved.push({ id, root: null, source: "unbound" });
+      continue;
+    }
+    const root = path.resolve(localPath);
     if (root === path.parse(root).root) throw new UserError(`project ${id}.path cannot be a filesystem root`);
     const duplicate = projectIdsByRoot.get(root);
     if (duplicate) throw new UserError(`projects ${duplicate} and ${id} resolve to the same path`);
-    projectRoots.set(id, root);
     projectIdsByRoot.set(root, id);
+    resolved.push({ id, root, source: "local" });
   }
+  return resolved;
+}
 
+export function resolveSkills(
+  registry: RegistryConfig,
+  paths: ProjectPaths,
+  bindings: ProjectBindingsConfig = { projects: {} },
+): ResolvedSkill[] {
+  const projectRoots = new Map(resolveProjects(registry, bindings).map((project) => [project.id, project.root]));
   return Object.entries(registry.skills).map(([name, skill]) => {
     const sourceRoot =
       skill.source === "local"
         ? paths.root
         : safeJoin(paths.vendors, registry.sources[skill.source]?.path ?? skill.source, `source ${skill.source}.path`);
-    const configuredTargets = skill.targets ?? [{ scope: "global" as const, agents: skill.agents ?? [] }];
-    const targets: ResolvedSkillTarget[] = configuredTargets.map((target) => {
+    const targets: ResolvedSkillTarget[] = skill.targets.map((target) => {
       const agents = target.agents.includes("*") ? [...agentIds] : target.agents.filter((id) => id !== "*");
       if (target.scope === "global") return { scope: "global", agents };
-      const projectRoot = projectRoots.get(target.project);
-      if (!projectRoot) throw new UserError(`skill ${name} references unknown project ${target.project}`);
+      const projectRoot = projectRoots.get(target.project) ?? null;
       return { scope: "project", projectId: target.project, projectRoot, agents };
     });
     return {

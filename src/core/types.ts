@@ -10,8 +10,8 @@ export interface GitSourceConfig {
 
 export type SourceConfig = GitSourceConfig;
 
-export interface ProjectConfig {
-  path: string;
+export interface ProjectBindingsConfig {
+  projects: Record<string, { path: string }>;
 }
 
 export interface GlobalSkillTargetConfig {
@@ -31,13 +31,12 @@ export interface SkillConfig {
   source: "local" | string;
   path: string;
   enabled: boolean;
-  agents?: Array<AgentId | "*">;
-  targets?: SkillTargetConfig[];
+  targets: SkillTargetConfig[];
 }
 
 export interface RegistryConfig {
   sources: Record<string, SourceConfig>;
-  projects: Record<string, ProjectConfig>;
+  projects: string[];
   skills: Record<string, SkillConfig>;
 }
 
@@ -62,10 +61,16 @@ export interface ResolvedProjectSkillTarget {
   scope: "project";
   agents: AgentId[];
   projectId: string;
-  projectRoot: string;
+  projectRoot: string | null;
 }
 
 export type ResolvedSkillTarget = ResolvedGlobalSkillTarget | ResolvedProjectSkillTarget;
+
+export interface ResolvedProject {
+  id: string;
+  root: string | null;
+  source: "local" | "unbound";
+}
 
 export interface ManagedLink {
   agent: AgentId;

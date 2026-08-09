@@ -1,5 +1,6 @@
 import path from "node:path";
 import type { AgentId, ResolvedSkill, ResolvedSkillTarget } from "../core/types.js";
+import { UserError } from "../core/errors.js";
 
 export interface AgentAdapter {
   id: AgentId;
@@ -31,10 +32,14 @@ abstract class HomeAgentAdapter implements AgentAdapter {
   }
 
   async linkPath(skill: ResolvedSkill, target: ResolvedSkillTarget): Promise<string> {
-    const directory =
-      target.scope === "global"
-        ? await this.getGlobalSkillDirectory()
-        : await this.getProjectSkillDirectory(target.projectRoot);
+    let directory: string;
+    if (target.scope === "global") {
+      directory = await this.getGlobalSkillDirectory();
+    } else {
+      const projectRoot = target.projectRoot;
+      if (!projectRoot) throw new UserError(`project ${target.projectId} is not bound on this device`);
+      directory = await this.getProjectSkillDirectory(projectRoot);
+    }
     return path.join(directory, skill.name);
   }
 }

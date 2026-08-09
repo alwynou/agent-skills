@@ -42,10 +42,12 @@ export class Synchronizer {
         throw new UserError(`skill ${skill.name} is missing SKILL.md at ${skill.absolutePath}`);
       }
       for (const target of skill.targets) {
+        let projectRoot: string | undefined;
         if (target.scope === "project") {
-          if (!target.projectRoot || !(await pathExists(this.fs, target.projectRoot))) {
+          if (!target.projectRoot) throw new UserError(`project ${target.projectId} is not bound on this device`);
+          projectRoot = target.projectRoot;
+          if (!(await pathExists(this.fs, target.projectRoot)))
             throw new UserError(`project ${target.projectId} does not exist at ${target.projectRoot}`);
-          }
           const stat = await this.fs.lstat(target.projectRoot);
           if (!stat.isDirectory()) throw new UserError(`project ${target.projectId} is not a directory: ${target.projectRoot}`);
         }
@@ -57,7 +59,7 @@ export class Synchronizer {
             skill: skill.name,
             scope: target.scope,
             ...(target.scope === "project"
-              ? { projectId: target.projectId, projectRoot: target.projectRoot }
+              ? { projectId: target.projectId, projectRoot: projectRoot as string }
               : {}),
             linkPath: await adapter.linkPath(skill, target),
             targetPath: skill.absolutePath,

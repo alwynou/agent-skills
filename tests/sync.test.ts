@@ -26,7 +26,6 @@ async function fixture() {
   await fs.mkdir(projectRoot, { recursive: true });
   await fs.writeFile(path.join(skillPath, "SKILL.md"), "---\nname: example\ndescription: test\n---\n");
   await fs.mkdir(path.join(root, ".skill-manager"), { recursive: true });
-  await fs.writeFile(path.join(root, ".skill-manager", "managed-links.json"), '{"version":1,"links":[]}\n');
   const fsPort = new NodeFs();
   const git = new GitClient();
   const store = new RegistryStore(fsPort, projectPaths(root));
@@ -52,7 +51,7 @@ async function fixture() {
 }
 
 describe("synchronizer", () => {
-  it("creates idempotent global links and migrates a v1 manifest", async () => {
+  it("creates idempotent global links", async () => {
     const { root, home, globalTarget, skill, synchronizer } = await fixture();
     const resolved = skill([globalTarget]);
     const first = await synchronizer.sync([resolved]);
@@ -67,6 +66,12 @@ describe("synchronizer", () => {
     expect(await fs.realpath(path.join(home, ".agents", "skills", "example"))).toBe(
       await fs.realpath(resolved.absolutePath),
     );
+  });
+
+  it("rejects obsolete managed-link manifests", async () => {
+    const { root, globalTarget, skill, synchronizer } = await fixture();
+    await fs.writeFile(path.join(root, ".skill-manager", "managed-links.json"), '{"version":1,"links":[]}\n');
+    await expect(synchronizer.sync([skill([globalTarget])])).rejects.toThrow("unsupported managed-links file");
   });
 
   it("creates project links in every agent-specific directory and maintains Git exclude", async () => {
@@ -146,14 +151,14 @@ describe("synchronizer", () => {
   });
 
   it("validates every target before creating any link", async () => {
-    const { home, root, globalTarget, skill, synchronizer } = await fixture();
+    const { home, globalTarget, skill, synchronizer } = await fixture();
     const missingTarget: ResolvedSkillTarget = {
       scope: "project",
       projectId: "missing",
-      projectRoot: path.join(root, "missing"),
+      projectRoot: null,
       agents: ["codex"],
     };
-    await expect(synchronizer.sync([skill([globalTarget, missingTarget])])).rejects.toThrow("does not exist");
+    await expect(synchronizer.sync([skill([globalTarget, missingTarget])])).rejects.toThrow("is not bound");
     await expect(fs.lstat(path.join(home, ".agents", "skills", "example"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 

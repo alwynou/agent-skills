@@ -12,24 +12,27 @@ The Vercel `skills` CLI is useful for discovery and ad-hoc installation. Its upd
 
 ## Decision
 
-The repository has three distinct states:
+The manager has four distinct states:
 
-1. `registry/skills.yaml` declares sources, named projects, skills, enablement, and global/project agent targets.
+1. `registry/skills.yaml` declares sources, portable logical project names, skills, enablement, and explicit global/project agent targets.
 2. `.skill-manager/lock.yaml` records the reviewed Git commit for each third-party source.
-3. `.skill-manager/managed-links.json` records only links created by this manager.
+3. `.skill-manager/projects.local.yaml` binds logical projects to absolute paths on one device and is not committed.
+4. `.skill-manager/managed-links.json` records only links created by this manager and is not committed.
 
 Local sources live in `skills/`. Third-party Git worktrees live in `vendors/` and may be Git submodules. Agent adapters translate a resolved skill target into an agent-specific global or project installation path. The synchronizer creates symlinks and reconciles only links recorded in its private, versioned manifest.
 
-Existing `agents` entries remain a global-target shorthand. The `targets` form can declare global and project placements, including multiple named projects. Relative project paths resolve from the registry repository; absolute paths are accepted for machine-specific layouts.
+Every skill declares `targets`; there is no implicit global shorthand. Project paths never appear in the portable registry. Each device establishes its own absolute bindings with `project bind`, so cloning the registry on a machine with a different directory layout requires no repository edit.
 
 ## Safety invariants
 
 - Registry paths cannot escape their source root.
 - Skill names cannot escape an agent's skill directory.
-- Project roots must exist before links are created and cannot be filesystem roots.
+- Project bindings must be absolute, must exist when bound or synced, cannot be filesystem roots, and cannot alias another logical project.
+- An unbound enabled project target aborts sync before any link or Git exclude mutation.
 - A skill is installable only if `SKILL.md` exists.
 - Existing non-matching files, directories, and links are never overwritten.
 - Stale links are removed only when the on-disk symlink still matches the previously recorded target.
+- A project cannot be unbound while its links remain in the managed-links manifest.
 - Git projects receive exact managed entries in `.git/info/exclude`; unrelated exclude content and occupied user paths are never hidden or rewritten.
 - `check` runs fetch/read operations only.
 - `update` requires one named source, refuses dirty worktrees, requires fast-forward ancestry, checks out the reviewed candidate, updates the lock atomically, then syncs.

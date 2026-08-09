@@ -6,3 +6,4 @@ coverage/
 
 # Machine-local symlink ownership state contains absolute paths.
 .skill-manager/managed-links.json
+.skill-manager/projects.local.yaml
