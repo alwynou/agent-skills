@@ -1,2 +1,27 @@
-sources: {}
-skills: {}
+sources:
+  herdr:
+    type: git
+    repo: https://github.com/herdrdev/herdr.git
+  mattpocock:
+    type: git
+    repo: https://github.com/mattpocock/skills.git
+
+skills:
+  herdr:
+    source: herdr
+    path: skills/herdr
+    enabled: true
+    agents:
+      - codex
+  grill-me:
+    source: mattpocock
+    path: skills/productivity/grill-me
+    enabled: true
+    agents:
+      - codex
+  grilling:
+    source: mattpocock
+    path: skills/productivity/grilling
+    enabled: true
+    agents:
+      - codex
