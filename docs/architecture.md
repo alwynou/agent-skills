@@ -14,9 +14,9 @@ The Vercel `skills` CLI is useful for discovery and ad-hoc installation. Its upd
 
 The manager has four distinct states:
 
-1. `registry/skills.yaml` declares sources, portable logical project names, skills, enablement, global Agent targets, and project-wide targets.
+1. `registry/skills.yaml` declares sources, skills, enablement, and global Agent targets.
 2. `.skill-manager/lock.yaml` records the reviewed Git commit for each third-party source.
-3. `.skill-manager/projects.local.yaml` binds each logical project to one or more absolute paths on one device and is not committed. A single logical project may be checked out several times on a machine — Git worktrees or a second clone — and every bound checkout receives that project's links.
+3. `.skill-manager/projects.local.yaml` records this device's project installations — each project's local checkout paths and which Skills it installs there — and is not committed. A single logical project may be checked out several times on a machine, and every bound checkout receives that project's links.
 4. `.skill-manager/managed-links.json` records only links created by this manager, including every Agent consuming a shared link, and is not committed.
 
 The managed-links manifest is version 3. Version 2 manifests are read as single-consumer records and rewritten as v3 on the next successful sync.
@@ -25,7 +25,11 @@ Local sources live in `skills/`. Third-party Git worktrees live in `vendors/` an
 
 New third-party sources are inspected in a temporary checkout before the registry is mutated, then added as Git submodules and pinned in the lock. A selective synchronization partitions the managed manifest by Skill: it reconciles the selected Skill while retaining all other link ownership and Git exclude entries unchanged.
 
-Every enabled skill declares at least one target; there is no implicit global shorthand. A disabled Skill may retain an empty target list after its final installation is removed, and reinstalling it adds a target and enables it. Project targets select Agents exactly as global targets do, but the directory layout bounds what that selection can express: a Claude-only project target is exact, while selecting one Agent from the group sharing `.agents/skills` necessarily exposes the Skill to the whole group. The installation plan reports the additional viewers as `impliedAgents` rather than implying an isolation the filesystem cannot provide. Project paths never appear in the portable registry. Each device establishes its own absolute bindings with `project bind`, so cloning the registry on a machine with a different directory layout requires no repository edit.
+Global targets are committed; project installations are not. A project exists on one device at paths that mean nothing on another, and often does not exist there at all, so a committed project target buys one `project bind` in place of one `install` while costing every other machine a record it cannot act on. The registry therefore carries only global reach, and `resolveSkills` merges the two sources at resolution time.
+
+What this deliberately gives up: a project installation does not travel. A new device reinstalls it. What it deliberately keeps: the Skill, its source, and its pinned commit are still committed, so the reviewed-content and lock guarantees are untouched — only the placement is local.
+
+An enabled Skill may therefore hold no global targets at all; the registry cannot see where else it is installed and must not assert that it is installed nowhere. Project installations select Agents exactly as global targets do, but the directory layout bounds what that selection can express: a Claude-only project installation is exact, while selecting one Agent from the group sharing `.agents/skills` necessarily exposes the Skill to the whole group. The installation plan reports the additional viewers as `impliedAgents` rather than implying an isolation the filesystem cannot provide.
 
 `remove` changes desired installation state without deleting Skill content. `delete <skill>` removes the Skill from desired state and deletes content only when ownership is provable: a local Skill must be a clean, tracked, real directory under `skills/`, and a third-party vendor is removed only when no other registered Skill uses its source. `delete --source` is the explicit atomic boundary for removing a third-party source and all of its registered Skills. Selective sync accepts a now-missing Skill only for these reconciliation paths, so stale managed links and exact Git exclude entries can be cleaned while unrelated manifest state is preserved.
 
@@ -52,7 +56,8 @@ The launchers speak the manager's own vocabulary rather than inventing one: the 
 - Registry paths cannot escape their source root.
 - Skill names cannot escape an agent's skill directory.
 - Project bindings must be absolute, must exist when bound or synced, cannot be filesystem roots, and cannot alias another logical project; one project may hold several distinct checkouts.
-- An unbound enabled project target aborts sync before any link or Git exclude mutation.
+- The committed registry never records a project name, a project path, or a project target; a registry that does was written by an older version and is refused rather than reinterpreted.
+- A project installation whose checkout is unbound aborts sync before any link or Git exclude mutation.
 - A skill is installable only if `SKILL.md` exists.
 - Existing non-matching files, directories, and links are never overwritten.
 - Dry-run installation may fetch into a temporary directory but cannot modify registry, lock, submodules, bindings, links, or Git excludes.

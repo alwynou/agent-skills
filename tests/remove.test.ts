@@ -41,23 +41,22 @@ async function localFixture() {
   await fs.writeFile(path.join(root, "skills", "example", "SKILL.md"), "---\nname: example\ndescription: test\n---\n");
   const registry: RegistryConfig = {
     sources: {},
-    projects: ["app"],
     skills: {
       example: {
         source: "local",
         path: "skills/example",
         enabled: true,
-        targets: [
-          { scope: "global", agents: ["codex"] },
-          { scope: "project", project: "app", agents: ["*"] },
-        ],
+        targets: [{ scope: "global", agents: ["codex"] }],
       },
     },
   };
   await fs.writeFile(path.join(root, "registry", "skills.yaml"), YAML.stringify(registry));
   await fs.writeFile(path.join(root, ".skill-manager", "lock.yaml"), "sources: {}\n");
   await commitAll(root);
-  await fs.writeFile(path.join(root, ".skill-manager", "projects.local.yaml"), YAML.stringify({ projects: { app: { path: projectRoot } } }));
+  await fs.writeFile(
+    path.join(root, ".skill-manager", "projects.local.yaml"),
+    YAML.stringify({ projects: { app: { paths: [projectRoot], skills: { example: { agents: ["*"] } } } } }),
+  );
   const store = new RegistryStore(new NodeFs(), projectPaths(root));
   const manager = new SkillManager(new NodeFs(), new GitClient(), store, projectPaths(root), home);
   return { root, home, projectRoot, store, manager };
@@ -90,7 +89,6 @@ async function gitSourceFixture(shared: boolean) {
   if (shared) skills.two = { source: "upstream", path: "skills/two", enabled: true, targets: [{ scope: "global", agents: ["claude"] }] };
   const registry: RegistryConfig = {
     sources: { upstream: { type: "git", repo: source } },
-    projects: [],
     skills,
   };
   await fs.writeFile(path.join(root, "registry", "skills.yaml"), YAML.stringify(registry));
@@ -151,9 +149,9 @@ describe("skill removal", () => {
       skillName: "example", scope: "global", agents: ["codex"], all: false, dryRun: false, sync: false,
     });
     expect(result.syncResult).toBeNull();
-    expect((await store.readRegistry()).skills.example.targets).toEqual([
-      { scope: "project", project: "app", agents: ["*"] },
-    ]);
+    // The global target is gone from the registry, but the project installation is
+    // machine state and survives untouched.
+    expect((await store.readRegistry()).skills.example).toMatchObject({ enabled: true, targets: [] });
     expect(await fs.realpath(path.join(home, ".agents", "skills", "example"))).toBeTruthy();
   });
 

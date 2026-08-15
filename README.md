@@ -76,9 +76,6 @@ sources:
     type: git
     repo: https://github.com/anthropics/skills.git
 
-projects:
-  - storefront
-
 skills:
   builder:
     source: local
@@ -99,27 +96,22 @@ skills:
           - codex
           - claude
 
-  storefront-review:
-    source: local
-    path: skills/storefront-review
-    enabled: true
-    targets:
-      - scope: project
-        project: storefront
-        agents:
-          - "*"
 ```
 
-Every skill uses explicit `targets`. A skill can be global, project-scoped, installed in multiple projects, or installed at both scopes. Global targets select individual Agents, and every Agent's global directory is independent. Project targets may select individual Agents too, but Codex, Kimi Code, Pi, and OpenCode all read the same `.agents/skills/<name>` link in a project (only Claude Code has a separate `.claude/skills/<name>`), so selecting one of those four physically exposes the Skill to the others as well; the install plan lists them as `impliedAgents`. Use `agents: ["*"]` to select every Agent explicitly. A disabled Skill may have `targets: []`; this is the retained state after its final installation target is removed.
+The committed registry carries **global** installations only. Every Agent's global directory is independent, so `targets` selects Agents freely; use `agents: ["*"]` for all of them. A Skill may have `targets: []` — it is registered and available, but installed globally nowhere.
 
-The registry stores portable logical project names, never machine paths. Bind each project on every device; relative CLI paths are resolved to absolute paths before being stored in the ignored `.skill-manager/projects.local.yaml` file. A logical project may be bound to several checkouts on one machine — Git worktrees or a second clone — and every bound checkout receives the project's links:
+**Project installations are machine state and are never committed.** Projects differ between devices, and their paths differ even when they do not, so recording them centrally would give every other machine an entry it cannot act on. They live in the ignored `.skill-manager/projects.local.yaml`, which holds each project's local checkout paths and the Skills installed into it:
 
 ```bash
-agent-skills project bind storefront ../storefront
+agent-skills install review --scope project --project storefront --project-path ../storefront
 agent-skills project list
 ```
 
-An enabled target whose project is unbound makes `sync` fail before any link changes. Project links in Git worktrees are added precisely to the worktree's local `.git/info/exclude`; tracked `.gitignore` files are never changed. Non-Git project directories are supported without exclude management.
+The Skill itself, its source, and its pinned commit are still committed, so the reviewed-content and lock guarantees are unaffected — only the placement is local. The trade this makes explicit: a project installation does not travel, and a new device installs it again. One project may be bound to several checkouts on a machine — Git worktrees or a second clone — and each receives the links; add one with `agent-skills project bind storefront ../storefront-worktree`.
+
+Codex, Kimi Code, Pi, and OpenCode all read the same `.agents/skills/<name>` link in a project (only Claude Code has a separate `.claude/skills/<name>`), so installing for one of those four physically exposes the Skill to the others; the install plan lists them as `impliedAgents`.
+
+A project installation whose checkout is unbound makes `sync` fail before any link changes. Project links in Git worktrees are added precisely to the worktree's local `.git/info/exclude`; tracked `.gitignore` files are never changed. Non-Git project directories are supported without exclude management.
 
 The matching lock file records the reviewed vendor revision:
 
@@ -166,8 +158,8 @@ agent-skills project unbind <project> [path]
 - `list` shows one row per resolved target, including scope, project, agents, and source path.
 - `show` prints one Skill's frontmatter title and description, source, locked commit, path, enabled state, and every target; `--json` emits the same detail machine-readably.
 - `sync` reconciles symlinks for enabled skills. `--skill` limits reconciliation to one Skill while preserving every other managed link.
-- `install` registers or extends a Skill target, optionally imports and pins a new Git source, and supports mutation-free `--dry-run --json` planning. Project installs accept `--agents <agent|*>`; any agent that shares a project skills directory with the selection is listed in the plan's `impliedAgents`.
-- `remove` deletes matching target records and their managed links while retaining the Skill; removing its final target disables it.
+- `install` registers or extends a Skill installation, optionally imports and pins a new Git source, and supports mutation-free `--dry-run --json` planning. A global install writes the registry; a project install writes only machine state, so it produces no tracked change unless it also imports a new source. Project installs accept `--agents <agent|*>`; any agent that shares a project skills directory with the selection is listed in the plan's `impliedAgents`.
+- `remove` deletes matching installation records and their managed links while retaining the Skill; `--scope project` edits machine state only, and `--all` clears both the global targets and every project installation this machine knows about. A Skill left installed nowhere is disabled.
 - `delete <skill>` removes the Skill record, all of its managed links, and owned local content. It refuses local Skills with modified, untracked, or ignored content — those paths may be user data, so the error lists them — while an exclusive third-party source is removed too, and a source shared by other registered Skills is retained.
 - `delete --source <id>` explicitly removes a third-party source, every Skill registered from it, its lock, submodule, vendor checkout, links, and managed Git exclude entries. It refuses `local`, refuses vendors with modified or untracked content, and treats uninitialized submodules as clean. Ignored content inside the vendor (rebuildable build output) is deleted along with it and reported in the plan's `ignoredPaths`.
 - `publish` runs one mutating command, commits its tracked changes on `main`, reconciles the links, and pushes unless `--no-push` is passed. Validation is scoped to the changed paths, and a failure before the commit restores a clean `main` without touching a link.

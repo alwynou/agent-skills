@@ -30,11 +30,14 @@ function validateAgents(value: unknown, label: string): Array<AgentId | "*"> {
 export function validateRegistry(value: unknown): RegistryConfig {
   if (!isRecord(value)) throw new UserError("registry must be a mapping");
   const sourceInput = value.sources ?? {};
-  const projectInput = value.projects ?? [];
   const skillInput = value.skills ?? {};
   if (!isRecord(sourceInput)) throw new UserError("registry.sources must be a mapping");
-  if (!Array.isArray(projectInput)) throw new UserError("registry.projects must be a list");
   if (!isRecord(skillInput)) throw new UserError("registry.skills must be a mapping");
+  // Project installations are machine state; a registry carrying them was written by an
+  // older version and would silently mean something different on another device.
+  if (value.projects !== undefined) {
+    throw new UserError("registry.projects is no longer supported; project installations are recorded in .skill-manager/projects.local.yaml");
+  }
 
   const sources: RegistryConfig["sources"] = {};
   for (const [id, candidate] of Object.entries(sourceInput)) {
@@ -47,13 +50,6 @@ export function validateRegistry(value: unknown): RegistryConfig {
       ...(typeof candidate.path === "string" ? { path: candidate.path } : {}),
     };
   }
-
-  const projects = projectInput.map((candidate, index) => {
-    const id = requiredString(candidate, `registry.projects[${index}]`);
-    if (!skillNamePattern.test(id)) throw new UserError(`project ${id} must use lowercase letters, numbers, and single hyphens`);
-    return id;
-  });
-  if (new Set(projects).size !== projects.length) throw new UserError("registry.projects must not contain duplicates");
 
   const skills: RegistryConfig["skills"] = {};
   for (const [name, candidate] of Object.entries(skillInput)) {
@@ -69,23 +65,16 @@ export function validateRegistry(value: unknown): RegistryConfig {
       throw new UserError(`skill ${name}.enabled must be a boolean`);
     }
     if (!Array.isArray(candidate.targets)) throw new UserError(`skill ${name}.targets must be a list`);
-    if (candidate.targets.length === 0 && candidate.enabled) {
-      throw new UserError(`skill ${name} with no targets must be disabled`);
-    }
     const targets: SkillTargetConfig[] = candidate.targets.map((target, index) => {
       const label = `skill ${name}.targets[${index}]`;
       if (!isRecord(target)) throw new UserError(`${label} must be a mapping`);
       const targetAgents = validateAgents(target.agents, `${label}.agents`);
-      if (target.scope === "global") {
-        if (target.project !== undefined) throw new UserError(`${label}.project is not allowed for global scope`);
-        return { scope: "global", agents: targetAgents };
-      }
       if (target.scope === "project") {
-        const project = requiredString(target.project, `${label}.project`);
-        if (!projects.includes(project)) throw new UserError(`${label} references unknown project ${project}`);
-        return { scope: "project", project, agents: targetAgents };
+        throw new UserError(`${label} is a project target; reinstall it locally with --scope project because project installations are no longer committed`);
       }
-      throw new UserError(`${label}.scope must be global or project`);
+      if (target.scope !== "global") throw new UserError(`${label}.scope must be global`);
+      if (target.project !== undefined) throw new UserError(`${label}.project is not allowed for global scope`);
+      return { scope: "global", agents: targetAgents };
     });
     skills[name] = {
       source,
@@ -94,7 +83,7 @@ export function validateRegistry(value: unknown): RegistryConfig {
       targets,
     };
   }
-  return { sources, projects, skills };
+  return { sources, skills };
 }
 
 export function validateProjectBindings(value: unknown): ProjectBindingsConfig {
@@ -113,7 +102,15 @@ export function validateProjectBindings(value: unknown): ProjectBindingsConfig {
       if (!path.isAbsolute(projectPath)) throw new UserError(`project binding ${id}.paths[${index}] must be absolute`);
       return path.resolve(projectPath);
     });
-    projects[id] = { paths: [...new Set(paths)] };
+    const skillInput = candidate.skills ?? {};
+    if (!isRecord(skillInput)) throw new UserError(`project binding ${id}.skills must be a mapping`);
+    const skills: ProjectBindingsConfig["projects"][string]["skills"] = {};
+    for (const [name, install] of Object.entries(skillInput)) {
+      if (!skillNamePattern.test(name)) throw new UserError(`project binding ${id}.skills has invalid name ${name}`);
+      if (!isRecord(install)) throw new UserError(`project binding ${id}.skills.${name} must be a mapping`);
+      skills[name] = { agents: validateAgents(install.agents, `project binding ${id}.skills.${name}.agents`) };
+    }
+    projects[id] = { paths: [...new Set(paths)], skills };
   }
   return { projects };
 }

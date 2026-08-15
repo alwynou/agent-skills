@@ -2,8 +2,6 @@ sources:
   herdr:
     type: git
     repo: https://github.com/herdrdev/herdr.git
-projects:
-  - cfpamf-front-storehouse-manage-front
 skills:
   manage-agent-skills:
     source: local

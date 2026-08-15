@@ -1,5 +1,5 @@
 import path from "node:path";
-import { agentIds, type ProjectBindingsConfig, type RegistryConfig, type ResolvedProject, type ResolvedSkill, type ResolvedSkillTarget } from "../core/types.js";
+import { agentIds, type AgentId, type ProjectBindingsConfig, type RegistryConfig, type ResolvedProject, type ResolvedSkill, type ResolvedSkillTarget } from "../core/types.js";
 import type { ProjectPaths } from "../core/paths.js";
 import { UserError } from "../core/errors.js";
 
@@ -12,14 +12,11 @@ function safeJoin(root: string, relativePath: string, label: string): string {
   return resolved;
 }
 
-export function resolveProjects(
-  registry: RegistryConfig,
-  bindings: ProjectBindingsConfig,
-): ResolvedProject[] {
+export function resolveProjects(bindings: ProjectBindingsConfig): ResolvedProject[] {
   const resolved: ResolvedProject[] = [];
   const projectIdsByRoot = new Map<string, string>();
-  for (const id of registry.projects) {
-    const localPaths = bindings.projects[id]?.paths ?? [];
+  for (const [id, install] of Object.entries(bindings.projects)) {
+    const localPaths = install.paths;
     if (localPaths.length === 0) {
       resolved.push({ id, roots: [], source: "unbound" });
       continue;
@@ -43,17 +40,28 @@ export function resolveSkills(
   paths: ProjectPaths,
   bindings: ProjectBindingsConfig = { projects: {} },
 ): ResolvedSkill[] {
-  const projectRoots = new Map(resolveProjects(registry, bindings).map((project) => [project.id, project.roots]));
+  const projectRoots = new Map(resolveProjects(bindings).map((project) => [project.id, project.roots]));
+  // A Skill's global reach is committed; where it additionally lands on this machine is
+  // read from local state, so the two are merged only at resolution time.
+  const projectTargets = new Map<string, ResolvedSkillTarget[]>();
+  for (const [projectId, install] of Object.entries(bindings.projects)) {
+    for (const [name, target] of Object.entries(install.skills)) {
+      const agents = target.agents.includes("*") ? [...agentIds] : target.agents.filter((id): id is AgentId => id !== "*");
+      const existing = projectTargets.get(name) ?? [];
+      existing.push({ scope: "project", projectId, projectRoots: projectRoots.get(projectId) ?? [], agents });
+      projectTargets.set(name, existing);
+    }
+  }
   return Object.entries(registry.skills).map(([name, skill]) => {
     const sourceRoot =
       skill.source === "local"
         ? paths.root
         : safeJoin(paths.vendors, registry.sources[skill.source]?.path ?? skill.source, `source ${skill.source}.path`);
-    const targets: ResolvedSkillTarget[] = skill.targets.map((target) => {
-      const agents = target.agents.includes("*") ? [...agentIds] : target.agents.filter((id) => id !== "*");
-      if (target.scope === "global") return { scope: "global", agents };
-      return { scope: "project", projectId: target.project, projectRoots: projectRoots.get(target.project) ?? [], agents };
-    });
+    const targets: ResolvedSkillTarget[] = skill.targets.map((target) => ({
+      scope: "global" as const,
+      agents: target.agents.includes("*") ? [...agentIds] : target.agents.filter((id): id is AgentId => id !== "*"),
+    }));
+    targets.push(...(projectTargets.get(name) ?? []));
     return {
       name,
       sourceId: skill.source,

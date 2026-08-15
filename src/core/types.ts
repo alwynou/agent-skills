@@ -10,9 +10,20 @@ export interface GitSourceConfig {
 
 export type SourceConfig = GitSourceConfig;
 
-export interface ProjectBindingsConfig {
+export interface ProjectInstallConfig {
   /** One logical project may exist at several checkouts on a single machine. */
-  projects: Record<string, { paths: string[] }>;
+  paths: string[];
+  /** Which Skills this machine installs into that project, and for which Agents. */
+  skills: Record<string, { agents: Array<AgentId | "*"> }>;
+}
+
+/**
+ * Project installations are machine state, never committed. A project exists on one
+ * device at paths that mean nothing on another, so the portable registry carries only
+ * global installations and this file carries the rest.
+ */
+export interface ProjectBindingsConfig {
+  projects: Record<string, ProjectInstallConfig>;
 }
 
 export interface GlobalSkillTargetConfig {
@@ -20,13 +31,15 @@ export interface GlobalSkillTargetConfig {
   agents: Array<AgentId | "*">;
 }
 
-export interface ProjectSkillTargetConfig {
-  scope: "project";
-  project: string;
-  agents: Array<AgentId | "*">;
-}
+export type SkillTargetConfig = GlobalSkillTargetConfig;
 
-export type SkillTargetConfig = GlobalSkillTargetConfig | ProjectSkillTargetConfig;
+/**
+ * What an operation acted on. Unlike `SkillTargetConfig` this can name a project, because
+ * plans report machine state as well as committed state.
+ */
+export type InstalledTarget =
+  | { scope: "global"; agents: Array<AgentId | "*"> }
+  | { scope: "project"; project: string; agents: Array<AgentId | "*"> };
 
 export interface SkillConfig {
   source: "local" | string;
@@ -37,7 +50,6 @@ export interface SkillConfig {
 
 export interface RegistryConfig {
   sources: Record<string, SourceConfig>;
-  projects: string[];
   skills: Record<string, SkillConfig>;
 }
 
@@ -155,7 +167,7 @@ export interface InstallSkillPlan {
   skill: string;
   source: { id: string; repo: string | null; commit: string | null; added: boolean };
   skillPath: string;
-  target: SkillTargetConfig;
+  target: InstalledTarget;
   projectBinding: { id: string; path: string; paths: string[] } | null;
   trackedChanges: string[];
   localChanges: string[];
@@ -186,7 +198,7 @@ export interface SkillRemovalPlan {
   action: "remove" | "delete" | "delete-source";
   skills: string[];
   sourceId: string | null;
-  target: SkillTargetConfig | "all" | null;
+  target: InstalledTarget | "all" | null;
   trackedChanges: string[];
   links: string[];
   retainedSource: boolean;

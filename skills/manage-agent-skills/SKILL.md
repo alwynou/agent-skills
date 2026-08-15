@@ -16,6 +16,8 @@ Use this repository as the only owner of Skill sources and symlinks. Never insta
 - When the user means every Agent, every AI tool, or device-wide availability, use global scope for all supported Agents and do not create a project target.
 - Ask one concise question before acting when more than one interpretation remains plausible or the requested scope is absent.
 
+Project scope is machine-local by design. The registry committed to git carries global installations only — its targets accept `scope: global` alone, and there is no project list. A project install records its state in `.skill-manager/projects.local.yaml` (git-ignored): the project’s local checkout paths, and which Skills are installed for which Agents. The Skill’s content, source, and locked commit still commit to git either way — only “which directory on this machine also carries the Skill” stays local, so the review and lock model is unchanged and nothing gets weaker. The deliberate trade-off: project installs do not propagate across devices, because projects and their paths genuinely differ per machine; re-run the project install on each machine that needs it.
+
 `--agents` takes an internal adapter ID, or `"*"` for every supported Agent. Pass the ID corresponding to the Agent executing this Skill to install for that one Agent; a project install can likewise be narrowed to one Agent, subject to the shared-directory limits below:
 
 | Executing Agent | `--agents` value |
@@ -83,7 +85,7 @@ The commit title must be exactly:
 feat(skills): 添加 <skill-name> skill (<source-url>)
 ```
 
-If only local binding or links change, expect no commit. Report the installed scope, created links, locked commit, and commit hash.
+A project-scope install touches no tracked file, so it produces no commit — unless it introduces a new source, in which case the source, lock, and submodule still commit to `main`. If only local binding or links change, expect no commit either. Report the installed scope, created links, locked commit, and commit hash.
 
 ## Remove or delete
 
@@ -112,7 +114,7 @@ Every form accepts `--no-push` to keep the commit local.
 
 For `remove`, `--skill` is required and you must choose exactly one shape: `--all`, `--scope global --agents <id|"*">`, or `--scope project [--project <id>]`. `--scope global` rejects `--project`; `--scope project` rejects `--agents`. For `delete`, pass exactly one of `--skill` or `--source`.
 
-For `--scope project`, omit `--project` when running from the project checkout: the launcher derives the logical project ID from the current working directory’s Git remote, mirroring install.
+For `--scope project`, omit `--project` when running from the project checkout: the launcher derives the logical project ID from the current working directory’s Git remote, mirroring install. A project-scope remove edits the machine-local state in `projects.local.yaml` and likewise produces no commit.
 
 Removing the final target leaves the Skill disabled and available for a later reinstall. Deleting a local Skill removes its clean, tracked `skills/<name>` directory. Deleting the only Skill from a third-party source removes the source too; when other registered Skills share that source, the source, lock, and vendor remain. Whole-source deletion is explicit and atomic. Unknown, shared local, or out-of-tree content causes a safe refusal.
 
@@ -136,11 +138,11 @@ When links misbehave or the user reports a Skill stopped working, run `<skill-re
 
 ## Keep every machine in sync
 
-The registry commits to `main`, but symlink state is per-machine. On another machine or a fresh clone, run `<skill-real-path>/scripts/agent-skills.sh sync` after every `git pull` to actually create or remove links; pulling alone changes nothing on disk.
+The registry commits to `main`, but symlink state is per-machine. On another machine or a fresh clone, run `<skill-real-path>/scripts/agent-skills.sh sync` after every `git pull` to actually create or remove links; pulling alone changes nothing on disk. `sync` reconciles the global Skills from the registry plus the project installs recorded on this machine.
 
-Project-scope local paths live in `.skill-manager/projects.local.yaml`, which is git-ignored. After switching machines a project Skill therefore fails with “project X is not bound on this device”. Repair it by running `agent-skills.sh project list` to inspect binding status, `agent-skills.sh project bind <project-id> <path>` to record the local path, then `agent-skills.sh sync` to rebuild links.
+Project installs live entirely in `.skill-manager/projects.local.yaml`, which is git-ignored. Because this state never leaves the machine, a fresh device has no project installs at all: re-run the project install there, and do not try to repair the situation with `project bind`. Run `agent-skills.sh project list` to inspect this machine’s projects, their checkouts, and their installed Skills.
 
-One logical project may be checked out several times on a machine — Git worktrees or a second clone. Bind each checkout to the same project ID and every one of them receives the Skill's links; installing from a new checkout binds it automatically. A directory already bound to a different project ID is refused. `agent-skills.sh project unbind <project-id> [path]` drops one checkout, or every checkout when the path is omitted; it refuses while managed links still exist, so remove or disable the targets and run `sync` first.
+One logical project may be checked out several times on a machine — Git worktrees or a second clone. `agent-skills.sh project bind <project-id> <path>` attaches another local checkout to a known project and every checkout receives the Skill's links; installing from a new checkout binds it automatically, and a directory already bound to a different project ID is refused. Binding is also the fix when a Skill fails with “project X is not bound on this device” because the checkout moved on this same machine: bind the new path, then run `agent-skills.sh sync`. `agent-skills.sh project unbind <project-id> [path]` drops one checkout, or every checkout when the path is omitted; it refuses while managed links still exist, so remove or disable the targets and run `sync` first.
 
 ## Track upstream sources
 

@@ -169,6 +169,18 @@ describe("manage-agent-skills", () => {
     expect(skill).toContain("run `<skill-real-path>/scripts/agent-skills.sh doctor` first");
     expect(skill).toContain("run `<skill-real-path>/scripts/agent-skills.sh sync` after every `git pull`");
     expect(skill).toContain("`.skill-manager/projects.local.yaml`, which is git-ignored");
+    expect(skill).toContain("its targets accept `scope: global` alone, and there is no project list");
+    expect(skill).toContain("The Skill’s content, source, and locked commit still commit to git either way");
+    expect(skill).toContain("the review and lock model is unchanged");
+    expect(skill).toContain("project installs do not propagate across devices");
+    expect(skill).toContain("re-run the project install on each machine that needs it");
+    expect(skill).toContain("A project-scope install touches no tracked file, so it produces no commit");
+    expect(skill).toContain("A project-scope remove edits the machine-local state in `projects.local.yaml`");
+    expect(skill).toContain("`sync` reconciles the global Skills from the registry plus the project installs recorded on this machine");
+    expect(skill).toContain("re-run the project install there, and do not try to repair the situation with `project bind`");
+    expect(skill).toContain("attaches another local checkout to a known project");
+    expect(skill).not.toContain("commits the project target");
+    expect(skill).not.toContain("registry records the project");
     expect(skill).toContain("“project X is not bound on this device”");
     expect(skill).toContain("agent-skills.sh project bind <project-id> <path>");
     expect(skill).toContain("agent-skills.sh project unbind <project-id>");

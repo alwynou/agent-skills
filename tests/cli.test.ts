@@ -28,8 +28,6 @@ describe("CLI", () => {
       path.join(root, "registry", "skills.yaml"),
       [
         "sources: {}",
-        "projects:",
-        "  - app",
         "skills:",
         "  example:",
         "    source: local",
@@ -38,9 +36,6 @@ describe("CLI", () => {
         "    targets:",
         "      - scope: global",
         "        agents: [codex]",
-        "      - scope: project",
-        "        project: app",
-        "        agents: [\"*\"]",
         "",
       ].join("\n"),
     );
@@ -50,8 +45,7 @@ describe("CLI", () => {
       cwd: path.resolve("."),
     });
     expect(stdout).toContain("'global'");
-    expect(stdout).toContain("'project'");
-    expect(stdout).toContain("'app'");
+    expect(stdout).not.toContain("'project'");
 
     const dryRun = await execFileAsync(executable, [
       "src/cli.ts", "--root", root, "install", "example", "--scope", "global", "--agents", "opencode", "--dry-run", "--json",
@@ -92,11 +86,20 @@ describe("CLI", () => {
       cwd: path.resolve("."),
       env: environment,
     });
-    expect(beforeBind.stdout).toContain("'unbound'");
-    await execFileAsync(executable, ["src/cli.ts", "--root", root, "project", "bind", "app", path.join(root, "app")], {
+    // Nothing is installed into a project yet, so the machine knows of no projects.
+    expect(beforeBind.stdout).toContain("No projects registered.");
+    await execFileAsync(executable, [
+      "src/cli.ts", "--root", root, "install", "example", "--scope", "project",
+      "--project", "app", "--project-path", path.join(root, "app"), "--no-sync",
+    ], { cwd: path.resolve("."), env: environment });
+    // A project installation is machine state: nothing about it reaches the registry.
+    expect(await fs.readFile(path.join(root, "registry", "skills.yaml"), "utf8")).not.toContain("app");
+    const afterInstall = await execFileAsync(executable, ["src/cli.ts", "--root", root, "list"], {
       cwd: path.resolve("."),
       env: environment,
     });
+    expect(afterInstall.stdout).toContain("'project'");
+    expect(afterInstall.stdout).toContain("'app'");
     expect(await fs.readFile(path.join(root, ".skill-manager", "projects.local.yaml"), "utf8")).toContain(path.join(root, "app"));
     await execFileAsync(executable, ["src/cli.ts", "--root", root, "sync"], {
       cwd: path.resolve("."),

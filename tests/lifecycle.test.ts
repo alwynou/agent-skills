@@ -48,7 +48,6 @@ async function fixture() {
   await git(root, "-c", "protocol.file.allow=always", "submodule", "add", "--quiet", "--name", "upstream", source, "vendors/upstream");
   const registry: RegistryConfig = {
     sources: { upstream: { type: "git", repo: source } },
-    projects: [],
     skills: {
       foo: { source: "upstream", path: "skills/foo", enabled: true, targets: [{ scope: "global", agents: ["codex"] }] },
     },

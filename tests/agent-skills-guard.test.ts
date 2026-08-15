@@ -35,8 +35,6 @@ async function makeRegistryRoot() {
     path.join(root, "registry", "skills.yaml"),
     [
       "sources: {}",
-      "projects:",
-      "  - app",
       "skills:",
       "  example:",
       "    source: local",
@@ -110,7 +108,7 @@ describe("agent-skills.sh guard", () => {
 
     const projects = await run(["--root", root, "project", "list"], env);
     expect(projects.code, projects.stderr).toBe(0);
-    expect(projects.stdout).toContain("app");
+    expect(projects.stdout).toContain("No projects registered.");
 
     // doctor may report diagnostics against the throwaway root; what matters is
     // that the guard lets it through to the CLI instead of refusing it.

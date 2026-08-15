@@ -7,6 +7,7 @@ import { projectPaths } from "../src/core/paths.js";
 import { SkillManager } from "../src/core/manager.js";
 import { RegistryStore } from "../src/registry/store.js";
 import { GitClient } from "../src/git/client.js";
+import { resolveSkills } from "../src/registry/resolve.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -28,7 +29,7 @@ async function fixture() {
   await fs.mkdir(path.join(root, ".skill-manager"), { recursive: true });
   await fs.mkdir(path.join(source, "skills", "foo"), { recursive: true });
   await fs.writeFile(path.join(source, "skills", "foo", "SKILL.md"), "---\nname: foo\ndescription: test\n---\n");
-  await fs.writeFile(path.join(root, "registry", "skills.yaml"), "sources: {}\nprojects: []\nskills: {}\n");
+  await fs.writeFile(path.join(root, "registry", "skills.yaml"), "sources: {}\nskills: {}\n");
   await fs.writeFile(path.join(root, ".skill-manager", "lock.yaml"), "sources: {}\n");
   const gitClient = new GitClient();
   await git(gitClient, root, ["init", "--quiet"]);
@@ -111,10 +112,13 @@ describe("skill installation", () => {
       projectPath: projectRoot, dryRun: false, sync: true,
     });
     expect(installed.projectBinding).toEqual({ id: "owner-app", path: projectRoot, paths: [projectRoot] });
-    expect((await store.readRegistry()).skills.foo?.targets).toEqual([
-      { scope: "global", agents: ["codex"] },
-      { scope: "project", project: "owner-app", agents: ["*"] },
-    ]);
+    // The registry keeps only the global reach; the project installation is local.
+    expect((await store.readRegistry()).skills.foo?.targets).toEqual([{ scope: "global", agents: ["codex"] }]);
+    expect(installed.trackedChanges).toEqual([]);
+    expect((await store.readProjectBindings()).projects["owner-app"]).toEqual({
+      paths: [projectRoot],
+      skills: { foo: { agents: ["*"] } },
+    });
     expect(installed.links.sort()).toEqual([
       path.join(projectRoot, ".agents", "skills", "foo"),
       path.join(projectRoot, ".claude", "skills", "foo"),
@@ -162,9 +166,7 @@ describe("skill installation", () => {
         await fs.realpath(path.join(root, "vendors", "upstream", "skills", "foo")),
       );
     }
-    expect((await store.readRegistry()).skills.foo?.targets).toEqual([
-      { scope: "project", project: "owner-app", agents: ["claude"] },
-    ]);
+    expect((await store.readRegistry()).skills.foo?.targets).toEqual([]);
   });
 
   it("refuses a directory already bound to a different logical project", async () => {
@@ -205,6 +207,28 @@ describe("skill installation", () => {
     expect((await manager.listProjects()).find((project) => project.id === "owner-app")?.roots).toEqual([first]);
   });
 
+  it("keeps a project installation out of the registry so it never reaches another device", async () => {
+    const { root, source, store, manager } = await fixture();
+    const projectRoot = path.join(root, "worktree");
+    await fs.mkdir(projectRoot);
+    await manager.install({
+      skillName: "foo", scope: "project", agents: ["*"], projectId: "owner-app",
+      projectPath: projectRoot, repo: source, sourceId: "upstream", skillPath: "skills/foo",
+      dryRun: false, sync: true,
+    });
+
+    // The Skill and its pinned source are committed, so content stays reviewed; only the
+    // placement is local. Replaying the registry alone on another device installs nothing.
+    const committed = await store.readRegistry();
+    expect(committed.skills.foo).toMatchObject({ source: "upstream", enabled: true, targets: [] });
+    expect(JSON.stringify(committed)).not.toContain("owner-app");
+    expect(JSON.stringify(committed)).not.toContain(projectRoot);
+    expect((await store.readLock()).sources.upstream?.commit).toMatch(/^[0-9a-f]{40}$/);
+
+    const elsewhere = resolveSkills(committed, projectPaths(root));
+    expect(elsewhere.find((skill) => skill.name === "foo")?.targets).toEqual([]);
+  });
+
   it("installs a project Skill for one agent that owns its own project directory", async () => {
     const { root, source, store, manager } = await fixture();
     const projectRoot = path.join(root, "worktree");
@@ -215,9 +239,8 @@ describe("skill installation", () => {
       dryRun: false, sync: true,
     });
 
-    expect((await store.readRegistry()).skills.foo?.targets).toEqual([
-      { scope: "project", project: "owner-app", agents: ["claude"] },
-    ]);
+    expect((await store.readRegistry()).skills.foo?.targets).toEqual([]);
+    expect((await store.readProjectBindings()).projects["owner-app"]?.skills).toEqual({ foo: { agents: ["claude"] } });
     expect(installed.links).toEqual([path.join(projectRoot, ".claude", "skills", "foo")]);
     expect(installed.impliedAgents).toEqual([]);
     await expect(fs.lstat(path.join(projectRoot, ".agents", "skills", "foo"))).rejects.toThrow();

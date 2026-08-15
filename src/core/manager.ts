@@ -2,7 +2,7 @@ import path from "node:path";
 import { builtInAdapters, type AgentAdapter } from "../agents/adapter.js";
 import type { FsPort } from "./fs.js";
 import { pathExists } from "./fs.js";
-import { agentIds, type AgentId, type DeleteSkillRequest, type Diagnostic, type InstallSkillPlan, type InstallSkillRequest, type RegistryConfig, type RemoveSkillRequest, type ResolvedProject, type ResolvedSkill, type SetEnabledPlan, type SetEnabledRequest, type SkillRemovalPlan, type SkillTargetConfig, type UpdateInfo, type UpdateSourcePlan, type UpdateSourceRequest } from "./types.js";
+import { agentIds, type AgentId, type DeleteSkillRequest, type Diagnostic, type InstallSkillPlan, type InstallSkillRequest, type RegistryConfig, type RemoveSkillRequest, type ResolvedProject, type ResolvedSkill, type SetEnabledPlan, type SetEnabledRequest, type InstalledTarget, type ProjectBindingsConfig, type SkillRemovalPlan, type SkillTargetConfig, type UpdateInfo, type UpdateSourcePlan, type UpdateSourceRequest } from "./types.js";
 import type { ProjectPaths } from "./paths.js";
 import type { RegistryStore } from "../registry/store.js";
 import { resolveProjects, resolveSkills } from "../registry/resolve.js";
@@ -13,6 +13,13 @@ import { ProjectExcluder } from "../installer/project-excluder.js";
 import { UserError } from "./errors.js";
 import { GitImporter } from "../sources/git-importer.js";
 import { validateRegistry } from "../registry/schema.js";
+
+/** `"*"` absorbs everything else, so a wildcard on either side wins. */
+function mergeAgents(existing: Array<AgentId | "*"> | undefined, incoming: Array<AgentId | "*">): Array<AgentId | "*"> {
+  if (!existing) return incoming;
+  if (existing.includes("*") || incoming.includes("*")) return ["*"];
+  return [...new Set([...existing, ...incoming])];
+}
 import { describeSkill, type SkillDetail } from "./skill-detail.js";
 
 export class SkillManager {
@@ -48,46 +55,42 @@ export class SkillManager {
   }
 
   async listProjects(): Promise<ResolvedProject[]> {
-    return resolveProjects(await this.store.readRegistry(), await this.store.readProjectBindings());
+    return resolveProjects(await this.store.readProjectBindings());
   }
 
-  /** Adds one more checkout of an existing logical project on this machine. */
+  /** Adds one more checkout of a logical project on this machine. */
   async bindProject(projectId: string, projectPath: string): Promise<string[]> {
-    const registry = await this.store.readRegistry();
-    if (!registry.projects.includes(projectId)) throw new UserError(`unknown project ${projectId}`);
     const root = path.resolve(projectPath);
     if (root === path.parse(root).root) throw new UserError(`project ${projectId} path cannot be a filesystem root`);
     if (!(await pathExists(this.fs, root))) throw new UserError(`project ${projectId} does not exist at ${root}`);
     if (!(await this.fs.lstat(root)).isDirectory()) throw new UserError(`project ${projectId} is not a directory: ${root}`);
     const bindings = await this.store.readProjectBindings();
-    const existing = bindings.projects[projectId]?.paths ?? [];
-    const paths = existing.includes(root) ? existing : [...existing, root];
-    bindings.projects[projectId] = { paths };
-    resolveProjects(registry, bindings);
+    const existing = bindings.projects[projectId] ?? { paths: [], skills: {} };
+    const paths = existing.paths.includes(root) ? existing.paths : [...existing.paths, root];
+    bindings.projects[projectId] = { ...existing, paths };
+    resolveProjects(bindings);
     await this.store.writeProjectBindings(bindings);
     return paths;
   }
 
-  /** Drops one checkout, or every checkout when no path is given. */
+  /** Drops one checkout, or the whole project when no path is given. */
   async unbindProject(projectId: string, projectPath?: string): Promise<string[]> {
-    const registry = await this.store.readRegistry();
-    if (!registry.projects.includes(projectId)) throw new UserError(`unknown project ${projectId}`);
     const bindings = await this.store.readProjectBindings();
-    const existing = bindings.projects[projectId]?.paths ?? [];
-    if (existing.length === 0) throw new UserError(`project ${projectId} is not bound on this device`);
-    let removing = existing;
+    const existing = bindings.projects[projectId];
+    if (!existing || existing.paths.length === 0) throw new UserError(`project ${projectId} is not bound on this device`);
+    let removing = existing.paths;
     if (projectPath !== undefined) {
       const root = path.resolve(projectPath);
-      if (!existing.includes(root)) throw new UserError(`project ${projectId} is not bound to ${root}`);
+      if (!existing.paths.includes(root)) throw new UserError(`project ${projectId} is not bound to ${root}`);
       removing = [root];
     }
     const managed = await this.store.readManagedLinks();
     if (managed.links.some((link) => link.scope === "project" && link.projectId === projectId && link.projectRoot !== undefined && removing.includes(link.projectRoot))) {
-      throw new UserError(`project ${projectId} still has managed links; disable or remove its targets, run sync, then unbind`);
+      throw new UserError(`project ${projectId} still has managed links; remove its Skills, run sync, then unbind`);
     }
-    const remaining = existing.filter((candidate) => !removing.includes(candidate));
+    const remaining = existing.paths.filter((candidate) => !removing.includes(candidate));
     if (remaining.length === 0) delete bindings.projects[projectId];
-    else bindings.projects[projectId] = { paths: remaining };
+    else bindings.projects[projectId] = { ...existing, paths: remaining };
     await this.store.writeProjectBindings(bindings);
     return remaining;
   }
@@ -99,8 +102,7 @@ export class SkillManager {
     );
   }
 
-  private async reconcileRemoved(registry: RegistryConfig, skillNames: string[]): Promise<SyncResult> {
-    const bindings = await this.store.readProjectBindings();
+  private async reconcileRemoved(registry: RegistryConfig, bindings: ProjectBindingsConfig, skillNames: string[]): Promise<SyncResult> {
     const skills = resolveSkills(registry, this.paths, bindings);
     return new Synchronizer(this.fs, this.store, this.adapters, this.git).sync(
       skills,
@@ -118,6 +120,7 @@ export class SkillManager {
 
   async remove(request: RemoveSkillRequest): Promise<SkillRemovalPlan> {
     const registry = structuredClone(await this.store.readRegistry());
+    const bindings = structuredClone(await this.store.readProjectBindings());
     const skill = registry.skills[request.skillName];
     if (!skill) throw new UserError(`unknown skill ${request.skillName}`);
     if (!request.all && !request.scope) throw new UserError("remove requires --all or --scope global|project");
@@ -125,19 +128,28 @@ export class SkillManager {
       throw new UserError("--all cannot be combined with scope, agents, or project");
     }
 
-    let changed = false;
+    let registryChanged = false;
+    let bindingsChanged = false;
     let target: SkillRemovalPlan["target"] = "all";
     let linkPredicate: ((link: Awaited<ReturnType<RegistryStore["readManagedLinks"]>>["links"][number]) => boolean) | undefined;
+
+    const dropLocalInstall = (projectId: string): void => {
+      const install = bindings.projects[projectId];
+      if (!install?.skills[request.skillName]) return;
+      delete install.skills[request.skillName];
+      bindingsChanged = true;
+    };
+
     if (request.all) {
-      changed = skill.targets.length > 0;
+      registryChanged = skill.targets.length > 0;
       skill.targets = [];
+      // `--all` means every installation this machine can see, committed or not.
+      for (const projectId of Object.keys(bindings.projects)) dropLocalInstall(projectId);
     } else if (request.scope === "project") {
       if (!request.projectId) throw new UserError("project removal requires --project");
       if (request.agents) throw new UserError("--agents is not allowed for project removal");
       target = { scope: "project", project: request.projectId, agents: ["*"] };
-      const before = skill.targets.length;
-      skill.targets = skill.targets.filter((candidate) => candidate.scope !== "project" || candidate.project !== request.projectId);
-      changed = skill.targets.length !== before;
+      dropLocalInstall(request.projectId);
       linkPredicate = (link) => link.scope === "project" && link.projectId === request.projectId;
     } else {
       if (!request.agents || request.agents.length === 0) throw new UserError("global removal requires --agents");
@@ -146,40 +158,39 @@ export class SkillManager {
       target = { scope: "global", agents: request.agents };
       const nextTargets: SkillTargetConfig[] = [];
       for (const candidate of skill.targets) {
-        if (candidate.scope !== "global") {
-          nextTargets.push(candidate);
-          continue;
-        }
         const existing = candidate.agents.includes("*") ? [...agentIds] : candidate.agents.filter((agent) => agent !== "*");
         const remaining = existing.filter((agent) => !requested.has(agent));
-        if (remaining.length !== existing.length) changed = true;
+        if (remaining.length !== existing.length) registryChanged = true;
         if (remaining.length > 0) nextTargets.push({ scope: "global", agents: remaining });
       }
       skill.targets = nextTargets;
       linkPredicate = (link) => link.scope === "global" && link.agents.some((agent) => requested.has(agent));
     }
 
-    if (!changed) {
+    if (!registryChanged && !bindingsChanged) {
       return {
         action: "remove", skills: [request.skillName], sourceId: null, target,
         trackedChanges: [], links: [], retainedSource: true, ignoredPaths: [], noOp: true, applied: false, syncResult: null,
       };
     }
-    if (skill.targets.length === 0) skill.enabled = false;
+    // A Skill installed nowhere this machine knows about is disabled only when the
+    // registry itself changed; a purely local removal must not decide for other devices.
+    const installedLocally = Object.values(bindings.projects).some((install) => install.skills[request.skillName]);
+    if (registryChanged && skill.targets.length === 0 && !installedLocally) skill.enabled = false;
     validateRegistry(registry);
     const links = await this.managedLinkPaths(new Set([request.skillName]), linkPredicate);
+    const trackedChanges = registryChanged ? [path.relative(this.paths.root, this.paths.registry)] : [];
     if (request.dryRun) {
       return {
-        action: "remove", skills: [request.skillName], sourceId: null, target,
-        trackedChanges: [path.relative(this.paths.root, this.paths.registry)], links,
+        action: "remove", skills: [request.skillName], sourceId: null, target, trackedChanges, links,
         retainedSource: true, ignoredPaths: [], noOp: false, applied: false, syncResult: null,
       };
     }
-    const syncResult = request.sync ? await this.reconcileRemoved(registry, [request.skillName]) : null;
-    await this.store.writeRegistry(registry);
+    if (registryChanged) await this.store.writeRegistry(registry);
+    if (bindingsChanged) await this.store.writeProjectBindings(bindings);
+    const syncResult = request.sync ? await this.reconcileRemoved(registry, bindings, [request.skillName]) : null;
     return {
-      action: "remove", skills: [request.skillName], sourceId: null, target,
-      trackedChanges: [path.relative(this.paths.root, this.paths.registry)], links,
+      action: "remove", skills: [request.skillName], sourceId: null, target, trackedChanges, links,
       retainedSource: true, ignoredPaths: [], noOp: false, applied: true, syncResult,
     };
   }
@@ -316,7 +327,7 @@ export class SkillManager {
         retainedSource, ignoredPaths, noOp: false, applied: false, syncResult: null,
       };
     }
-    const syncResult = request.sync ? await this.reconcileRemoved(registry, skillNames) : null;
+    const syncResult = request.sync ? await this.reconcileRemoved(registry, await this.store.readProjectBindings(), skillNames) : null;
     if (localDelete) await this.git.run(this.paths.root, ["rm", "-r", "--", localDelete.relativePath]);
     // `git rm` removes a submodule's whole working tree, ignored content included.
     if (sourceDelete) await this.git.run(this.paths.root, ["rm", "--", sourceDelete.vendorPath]);
@@ -406,31 +417,6 @@ export class SkillManager {
     }
 
     let projectBinding: InstallSkillPlan["projectBinding"] = null;
-    let target: SkillTargetConfig;
-    if (request.scope === "project") {
-      if (!request.projectId || !request.projectPath) throw new UserError("project scope requires --project and --project-path");
-      const projectRoot = path.resolve(request.projectPath);
-      if (projectRoot === path.parse(projectRoot).root) throw new UserError("project path cannot be a filesystem root");
-      if (!(await pathExists(this.fs, projectRoot)) || !(await this.fs.lstat(projectRoot)).isDirectory()) {
-        throw new UserError(`project is not a directory: ${projectRoot}`);
-      }
-      if (!registry.projects.includes(request.projectId)) registry.projects.push(request.projectId);
-      const otherBinding = Object.entries(bindings.projects).find(([id, value]) =>
-        id !== request.projectId && value.paths.some((candidate) => path.resolve(candidate) === projectRoot),
-      );
-      if (otherBinding) throw new UserError(`project path is already bound to ${otherBinding[0]}`);
-      // Installing from a second worktree of the same repository adds that checkout
-      // rather than fighting the first one for the binding.
-      const existingPaths = bindings.projects[request.projectId]?.paths ?? [];
-      const paths = existingPaths.includes(projectRoot) ? existingPaths : [...existingPaths, projectRoot];
-      bindings.projects[request.projectId] = { paths };
-      projectBinding = { id: request.projectId, path: projectRoot, paths };
-      target = { scope: "project", project: request.projectId, agents: request.agents };
-    } else {
-      if (request.projectId || request.projectPath) throw new UserError("project options are not allowed for global scope");
-      target = { scope: "global", agents: request.agents };
-    }
-
     const trackedChanges = new Set<string>();
     const localChanges = new Set<string>();
     if (sourceAdded) {
@@ -438,27 +424,50 @@ export class SkillManager {
       trackedChanges.add(path.join("vendors", sourceId));
       trackedChanges.add(path.relative(this.paths.root, this.paths.lock));
     }
+    // The Skill itself is always registered and pinned, so its content stays reviewed and
+    // committed. Only where it lands differs: global reach is committed, a project
+    // installation is machine state.
     const skill = existingSkill ?? { source: sourceId, path: skillPath, enabled: true, targets: [] };
     if (!existingSkill) registry.skills[request.skillName] = skill;
-    const matchingTarget = skill.targets.find((candidate) =>
-      candidate.scope === target.scope && (candidate.scope === "global" || candidate.project === (target as typeof candidate).project),
-    );
-    if (matchingTarget) {
-      const mergedAgents = matchingTarget.agents.includes("*") || target.agents.includes("*")
-        ? ["*" as const]
-        : [...new Set([...matchingTarget.agents, ...target.agents])];
-      if (JSON.stringify(mergedAgents) !== JSON.stringify(matchingTarget.agents)) matchingTarget.agents = mergedAgents;
-    } else {
-      skill.targets.push(target);
-    }
     if (!skill.enabled) skill.enabled = true;
+
+    let target: InstalledTarget;
+    if (request.scope === "project") {
+      if (!request.projectId || !request.projectPath) throw new UserError("project scope requires --project and --project-path");
+      const projectRoot = path.resolve(request.projectPath);
+      if (projectRoot === path.parse(projectRoot).root) throw new UserError("project path cannot be a filesystem root");
+      if (!(await pathExists(this.fs, projectRoot)) || !(await this.fs.lstat(projectRoot)).isDirectory()) {
+        throw new UserError(`project is not a directory: ${projectRoot}`);
+      }
+      const otherBinding = Object.entries(bindings.projects).find(([id, value]) =>
+        id !== request.projectId && value.paths.some((candidate) => path.resolve(candidate) === projectRoot),
+      );
+      if (otherBinding) throw new UserError(`project path is already bound to ${otherBinding[0]}`);
+      // Installing from a second worktree of the same repository adds that checkout
+      // rather than fighting the first one for the binding.
+      const existing = bindings.projects[request.projectId] ?? { paths: [], skills: {} };
+      const paths = existing.paths.includes(projectRoot) ? existing.paths : [...existing.paths, projectRoot];
+      const installed = existing.skills[request.skillName];
+      bindings.projects[request.projectId] = {
+        paths,
+        skills: { ...existing.skills, [request.skillName]: { agents: mergeAgents(installed?.agents, request.agents) } },
+      };
+      projectBinding = { id: request.projectId, path: projectRoot, paths };
+      target = { scope: "project", project: request.projectId, agents: request.agents };
+    } else {
+      if (request.projectId || request.projectPath) throw new UserError("project options are not allowed for global scope");
+      const matching = skill.targets.find((candidate) => candidate.scope === "global");
+      if (matching) matching.agents = mergeAgents(matching.agents, request.agents);
+      else skill.targets.push({ scope: "global", agents: request.agents });
+      target = { scope: "global", agents: request.agents };
+    }
 
     const originalRegistry = await this.store.readRegistry();
     if (JSON.stringify(registry) !== JSON.stringify(originalRegistry)) trackedChanges.add(path.relative(this.paths.root, this.paths.registry));
     const originalBindings = await this.store.readProjectBindings();
     if (JSON.stringify(bindings) !== JSON.stringify(originalBindings)) localChanges.add(path.relative(this.paths.root, this.paths.projectBindings));
     validateRegistry(registry);
-    resolveProjects(registry, bindings);
+    resolveProjects(bindings);
 
     const requestedAgents = request.agents.includes("*")
       ? this.adapters.map((adapter) => adapter.id)
@@ -524,7 +533,7 @@ export class SkillManager {
     let skills: ResolvedSkill[];
     try {
       const bindings = await this.store.readProjectBindings();
-      projects = resolveProjects(registry, bindings);
+      projects = resolveProjects(bindings);
       skills = resolveSkills(registry, this.paths, bindings);
       diagnostics.push({ level: "ok", message: "local project bindings are valid" });
     } catch (error) {
