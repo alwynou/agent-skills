@@ -1,5 +1,3 @@
 sources:
   herdr:
-    commit: "346411fa21afd297f5ed3b3fa56f9e3fbf7654b7"
-  mattpocock:
-    commit: "84fdeffd12f2ee307994d1eb6feb48173b6e0502"
+    commit: 346411fa21afd297f5ed3b3fa56f9e3fbf7654b7
