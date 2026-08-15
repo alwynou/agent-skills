@@ -3,7 +3,7 @@ import type { SyncResultSummary } from "../core/types.js";
 import type { MutationPlan } from "../command/mutations.js";
 import type { CommandPort } from "./process.js";
 
-const runtimePrefixes = ["src/", "bin/", "tests/", "skills/manage-agent-skills/"];
+const runtimePrefixes = ["src/", "tests/", "skills/manage-agent-skills/"];
 const runtimeFiles = new Set(["package.json", "package-lock.json", "tsconfig.json"]);
 
 export type Validation = "registry" | "full";
@@ -40,8 +40,8 @@ async function git(commands: CommandPort, root: string, args: string[]): Promise
 
 async function validate(commands: CommandPort, root: string, trackedChanges: readonly string[]): Promise<Validation> {
   if (!touchesRuntime(trackedChanges)) return "registry";
-  // `npm run check` already typechecks with the same compiler and config; emitting to
-  // `dist/` on top of that proves nothing the type check has not already proven.
+  // There is no build step: the Skill runs the TypeScript sources directly, so type
+  // checking and tests are the whole of validation.
   const result = await commands.run("npm", ["run", "check"], root);
   if (result.status !== 0) throw new UserError(`npm run check failed: ${result.stderr || result.stdout}`);
   return "full";

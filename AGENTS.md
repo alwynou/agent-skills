@@ -20,7 +20,8 @@ This repository is a conservative local package manager for executable Agent Ski
 - Typecheck: `npm run typecheck`
 - Test: `npm test`
 - Full check: `npm run check`
-- Build: `npm run build` — emits `dist/` for the packaged `agent-skills` binary only. Nothing in the Skill path reads it, and `typecheck` already runs the same compiler with `--noEmit`, so building proves nothing extra and is not part of publish validation.
+
+There is no build step and no emitted output: `tsconfig.json` sets `noEmit`, and every entry point runs the TypeScript sources through `tsx`. Do not reintroduce one without a consumer that actually needs compiled output.
 
 ## Code conventions
 

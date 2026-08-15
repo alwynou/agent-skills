@@ -35,17 +35,10 @@ See [`skills/manage-agent-skills`](skills/manage-agent-skills/README.md) for the
 
 ```bash
 npm install
-npm run build
-npm link
-```
-
-This exposes the `agent-skills` command, which runs the compiled `dist/` output. You can also run commands without linking:
-
-```bash
 npm run dev -- list
 ```
 
-The bundled Skill never needs either step: its entry points run the TypeScript sources directly and install missing dependencies and vendor submodules on first use, so a fresh clone is usable straight away.
+There is no build step. The TypeScript sources are the only artifact: `npm run dev` runs them through `tsx`, and so does every entry point of the bundled Skill. A fresh clone needs neither command — the Skill's entry points install missing dependencies and vendor submodules on first use.
 
 ## Repository layout
 
@@ -60,9 +53,11 @@ agent-skills/
 │   └── projects.local.yaml         # machine-local project path bindings
 ├── src/
 │   ├── agents/                     # supported agent adapters
+│   ├── command/                    # argument parsing, mutation dispatch
 │   ├── core/                       # orchestration, types, safety
 │   ├── git/                        # Git process abstraction
 │   ├── installer/                  # conservative symlink reconciler
+│   ├── publish/                    # commit-on-main publishing flow
 │   ├── registry/                   # load, validate, resolve
 │   └── sources/                    # Git source behavior
 ├── tests/
@@ -174,7 +169,7 @@ agent-skills project unbind <project> [path]
 - `enable` / `disable` flip one Skill's enabled flag, return a plan with the tracked registry change, and sync by default; `--dry-run` / `--json` inspect the plan, `--no-sync` defers reconciliation.
 - `project bind` adds this device's absolute path for a logical project, keeping any checkout already bound to it; a directory bound to a different project is refused. `project unbind <project> [path]` drops one checkout, or every checkout when the path is omitted, and refuses while that project still has managed links.
 
-Use `--root <path>` or `AGENT_SKILLS_ROOT` when running outside the registry repository.
+Run these through `npm run dev -- <command>`, or through the bundled Skill's `scripts/agent-skills.sh`, which locates the repository for you. Use `--root <path>` or `AGENT_SKILLS_ROOT` when running outside the registry repository.
 
 Install an already registered Skill into one Agent globally:
 
@@ -240,7 +235,6 @@ Third-party Skills can contain executable scripts and operational instructions. 
 ```bash
 npm run typecheck
 npm test
-npm run build
 ```
 
 Tests use temporary home and project directories and verify idempotency, safe cleanup, path confinement, local Git excludes, and read-only update checks.

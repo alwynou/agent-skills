@@ -3,21 +3,11 @@
   "version": "0.1.0",
   "description": "A conservative, declarative registry and synchronizer for Agent Skills.",
   "type": "module",
-  "bin": {
-    "agent-skills": "./bin/agent-skills.js"
-  },
-  "files": [
-    "bin",
-    "dist",
-    "README.md",
-    "LICENSE"
-  ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
     "check": "npm run typecheck && npm run test",
     "dev": "tsx src/cli.ts",
     "test": "vitest run tests",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json"
   },
   "engines": {
     "node": ">=20"

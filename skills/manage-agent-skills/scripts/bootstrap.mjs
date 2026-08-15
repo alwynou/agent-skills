@@ -28,8 +28,8 @@ export function ensureSubmodules(root) {
 
 /**
  * Brings the central repository to a runnable `origin/main` before anything TypeScript
- * exists. `dist/` is not committed and `node_modules` may be absent, so this stage has to
- * be plain Node on a plain shell — it is the only code that can assume nothing.
+ * exists. There is no compiled output and `node_modules` may be absent, so this stage has
+ * to be plain Node on a plain shell — it is the only code that can assume nothing.
  *
  * Returns `null` after re-executing the caller, which happens when the pull changed the
  * launcher or the manager itself; the caller should exit immediately in that case.
