@@ -134,7 +134,7 @@ describe("enable and disable", () => {
 
 describe("change launcher actions", () => {
   it("maps update, enable, and disable onto CLI arguments and commit titles", () => {
-    const update = parseChangeArgs(["--action", "update-source", "--source", "upstream"]);
+    const update = parseChangeArgs(["--action", "update", "--source", "upstream"]);
     expect(changeOperands(update)).toEqual(["update", "upstream"]);
     expect(changeMetadata(update)).toEqual({ title: "chore(skills): 更新 upstream source" });
 
@@ -144,8 +144,8 @@ describe("change launcher actions", () => {
     expect(changeMetadata(parseChangeArgs(["--action", "enable", "--skill", "foo"])))
       .toEqual({ title: "chore(skills): 启用 foo skill" });
 
-    expect(() => parseChangeArgs(["--action", "update-source", "--source", "upstream", "--skill", "foo"]))
-      .toThrow("--skill is not allowed for update-source");
+    expect(() => parseChangeArgs(["--action", "update", "--source", "upstream", "--skill", "foo"]))
+      .toThrow("--skill is not allowed for update");
     expect(() => parseChangeArgs(["--action", "enable"])).toThrow("--skill is required for enable");
   });
 

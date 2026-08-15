@@ -21,7 +21,7 @@ export function run(command, args, cwd, options = {}) {
 
 export function parseArgs(argv) {
   const allowed = new Set([
-    "--skill", "--source-url", "--scope", "--agent", "--workdir", "--project",
+    "--skill", "--source-url", "--scope", "--agents", "--workdir", "--project",
     "--repo", "--source-id", "--path", "--ref",
   ]);
   const values = new Map();
@@ -42,9 +42,8 @@ export function parseArgs(argv) {
   }
   for (const required of ["--skill", "--source-url", "--scope"]) if (!values.has(required)) fail(`${required} is required`);
   const scope = values.get("--scope");
-  if (!["project", "agent-global", "all-global"].includes(scope)) fail("--scope must be project, agent-global, or all-global");
-  if (scope === "agent-global" && !values.has("--agent")) fail("--agent is required for agent-global scope");
-  if (scope === "all-global" && values.has("--agent")) fail("--agent is only allowed for agent-global or project scope");
+  if (!["global", "project"].includes(scope)) fail("--scope must be global or project");
+  if (scope === "global" && !values.has("--agents")) fail("--agents is required for global scope");
   return values;
 }
 
@@ -77,13 +76,15 @@ export function inferProjectId(cwd) {
   return slug(path.basename(cwd));
 }
 
-/** Translates this Skill's vocabulary into the manager's `install` operands. */
+/**
+ * Builds the manager's `install` operands. The launcher deliberately speaks the manager's
+ * own vocabulary, so this only supplies what the manager cannot know: the working
+ * directory behind a project install and its inferred logical ID.
+ */
 export function installOperands(values, cwd) {
   const scope = values.get("--scope");
-  const operands = ["install", values.get("--skill")];
-  operands.push("--scope", scope === "project" ? "project" : "global");
-  // `--agent` narrows either an agent-global install or a project install to one agent.
-  operands.push("--agents", values.get("--agent") ?? "*");
+  const operands = ["install", values.get("--skill"), "--scope", scope];
+  operands.push("--agents", values.get("--agents") ?? "*");
   for (const name of ["--repo", "--source-id", "--path", "--ref"]) {
     if (values.has(name)) operands.push(name, values.get(name));
   }

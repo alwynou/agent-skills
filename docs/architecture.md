@@ -41,7 +41,9 @@ Two kinds of state must therefore be ordered, not merely both applied. Registry,
 
 The generic CLI entry point is not a publishing path. It refuses every subcommand that writes committed state and names the launcher that owns it; without that boundary a bare `update` or `enable` would leave tracked files dirty and deadlock every later launcher run.
 
-Publishing itself is a manager command, not launcher logic: `publish --title <t> -- <mutating command>` runs the mutation in-process and commits it. The launchers keep only what must exist before TypeScript does — locating a Node runtime, bringing the repository to `origin/main`, re-executing themselves when that pull changed them, and translating this Skill's vocabulary into manager operands. Every mutating command is parsed in exactly one place, so the plain and published paths cannot drift.
+Publishing itself is a manager command, not launcher logic: `publish --title <t> -- <mutating command>` runs the mutation in-process and commits it. The launchers keep only what must exist before TypeScript does — locating a Node runtime, bringing the repository to `origin/main`, and re-executing themselves when that pull changed them. Every mutating command is parsed in exactly one place, so the plain and published paths cannot drift.
+
+The launchers speak the manager's own vocabulary rather than inventing one: the same `--scope`, `--agents`, `--all`, and `--source` spellings, and `--action` values that are the manager's command names. They add only what the manager cannot know — the commit title, the source URL a Skill was confirmed from, and the working directory behind a project install. A second vocabulary would need a translation layer, and a translation layer is somewhere the two surfaces can disagree.
 
 ## Safety invariants
 

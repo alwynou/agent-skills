@@ -52,10 +52,10 @@ case "$command_name" in
     refuse "scripts/install-skill.sh"
     ;;
   remove|delete)
-    refuse "scripts/change-skill.sh --action remove|delete|delete-source"
+    refuse "scripts/change-skill.sh --action $command_name"
     ;;
   update)
-    refuse "scripts/change-skill.sh --action update-source --source <id>"
+    refuse "scripts/change-skill.sh --action update --source <id>"
     ;;
   enable|disable)
     refuse "scripts/change-skill.sh --action $command_name --skill <name>"

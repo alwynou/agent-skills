@@ -11,16 +11,21 @@ import { publishArgs } from "../skills/manage-agent-skills/scripts/bootstrap.mjs
 const execFileAsync = promisify(execFile);
 
 describe("manage-agent-skills", () => {
-  it("hands the install vocabulary to the manager as publish operands", () => {
-    const values = parseArgs([
-      "--skill", "review", "--source-url", "https://example.com/review", "--scope", "project", "--agent", "claude",
+  it("hands the install flags to the manager unchanged", () => {
+    const scoped = parseArgs([
+      "--skill", "review", "--source-url", "https://example.com/review", "--scope", "project", "--agents", "claude",
     ]);
-    expect(installOperands(values, "/work/app")).toEqual([
+    expect(installOperands(scoped, "/work/app")).toEqual([
       "install", "review", "--scope", "project", "--agents", "claude", "--project", "app", "--project-path", "/work/app",
     ]);
 
-    const global = parseArgs(["--skill", "review", "--source-url", "https://example.com/review", "--scope", "all-global"]);
-    expect(installOperands(global, "/work/app")).toEqual(["install", "review", "--scope", "global", "--agents", "*"]);
+    const everyAgent = parseArgs(["--skill", "review", "--source-url", "https://example.com/review", "--scope", "global", "--agents", "*"]);
+    expect(installOperands(everyAgent, "/work/app")).toEqual(["install", "review", "--scope", "global", "--agents", "*"]);
+
+    expect(() => parseArgs(["--skill", "review", "--source-url", "https://example.com/review", "--scope", "agent-global"]))
+      .toThrow("--scope must be global or project");
+    expect(() => parseArgs(["--skill", "review", "--source-url", "https://example.com/review", "--scope", "global"]))
+      .toThrow("--agents is required for global scope");
   });
 
   it("wraps operands in a titled publish invocation", () => {
@@ -30,23 +35,30 @@ describe("manage-agent-skills", () => {
       .toEqual(["src/cli.ts", "publish", "--title", "chore(skills): 删除 review skill", "--no-push", "--", "delete", "review"]);
   });
 
-  it("maps remove and delete requests onto manager operands and commit titles", () => {
+  it("rearranges change flags into manager operands and commit titles", () => {
     const projectRemove = parseChangeArgs([
       "--action", "remove", "--skill", "review", "--scope", "project", "--project", "storefront",
     ]);
     expect(changeOperands(projectRemove)).toEqual(["remove", "review", "--scope", "project", "--project", "storefront"]);
     expect(changeMetadata(projectRemove)).toEqual({ title: "chore(skills): 移除 review 的 project 安装" });
 
-    const agentRemove = parseChangeArgs(["--action", "remove", "--skill", "review", "--scope", "agent-global", "--agent", "claude"]);
+    const agentRemove = parseChangeArgs(["--action", "remove", "--skill", "review", "--scope", "global", "--agents", "claude"]);
     expect(changeOperands(agentRemove)).toEqual(["remove", "review", "--scope", "global", "--agents", "claude"]);
 
-    const sourceDelete = parseChangeArgs(["--action", "delete-source", "--source", "upstream"]);
+    const everyTarget = parseChangeArgs(["--action", "remove", "--skill", "review", "--all"]);
+    expect(changeOperands(everyTarget)).toEqual(["remove", "review", "--all"]);
+    expect(changeMetadata(everyTarget)).toEqual({ title: "chore(skills): 移除 review 的 全部 安装" });
+
+    const sourceDelete = parseChangeArgs(["--action", "delete", "--source", "upstream"]);
     expect(changeOperands(sourceDelete)).toEqual(["delete", "--source", "upstream"]);
     expect(changeMetadata(sourceDelete)).toEqual({ title: "chore(skills): 删除 upstream source 及其 Skills" });
-    expect(() => parseChangeArgs(["--action", "remove", "--skill", "review", "--scope", "agent-global"]))
-      .toThrow("--agent is required");
-    expect(() => parseChangeArgs(["--action", "delete-source", "--source", "upstream", "--skill", "review"]))
-      .toThrow("--skill is not allowed");
+
+    expect(() => parseChangeArgs(["--action", "remove", "--skill", "review", "--scope", "global"]))
+      .toThrow("--agents is required for global removal");
+    expect(() => parseChangeArgs(["--action", "delete", "--skill", "review", "--source", "upstream"]))
+      .toThrow("exactly one of --skill or --source");
+    expect(() => parseChangeArgs(["--action", "delete-source", "--source", "upstream"]))
+      .toThrow("--action must be remove, delete, update, enable, disable");
   });
 
   it("keeps the launchers free of branch and pull-request machinery", async () => {
@@ -91,15 +103,13 @@ describe("manage-agent-skills", () => {
   });
 
   it("rejects unknown, duplicate, and valueless launcher arguments", () => {
-    const required = ["--skill", "foo", "--source-url", "https://example.com/foo", "--scope", "all-global"];
+    const required = ["--skill", "foo", "--source-url", "https://example.com/foo", "--scope", "global", "--agents", "*"];
     expect(() => parseArgs([...required, "--unknown", "value"])).toThrow("unknown argument --unknown");
     expect(() => parseArgs([...required, "--skill", "bar"])).toThrow("duplicate argument --skill");
     expect(() => parseArgs([...required, "--path"])).toThrow("--path requires a value");
-    // A project install may name one agent; only the all-global scope forbids it.
-    expect(parseArgs(["--skill", "foo", "--source-url", "https://example.com/foo", "--scope", "project", "--agent", "codex"]).get("--agent"))
+    // A project install may name one agent, exactly as a global install does.
+    expect(parseArgs(["--skill", "foo", "--source-url", "https://example.com/foo", "--scope", "project", "--agents", "codex"]).get("--agents"))
       .toBe("codex");
-    expect(() => parseArgs([...required, "--agent", "codex"]))
-      .toThrow("--agent is only allowed for agent-global or project scope");
   });
 
   it("derives project IDs from GitHub and other hosted Git remotes", () => {
@@ -115,7 +125,7 @@ describe("manage-agent-skills", () => {
     const openAiMetadata = await fs.readFile(path.resolve("skills/manage-agent-skills/agents/openai.yaml"), "utf8");
     expect(skill).toContain("Infer scope from the user’s complete intent; do not keyword-match fixed phrases");
     expect(skill).toContain("disable-model-invocation: true");
-    expect(skill).toContain("Global installation for one Agent uses internal adapter IDs");
+    expect(skill).toContain("`--agents` takes an internal adapter ID, or `\"*\"` for every supported Agent");
     expect(skill).toContain("changes to the central `agent-skills` repository, and selects an installed Node.js 20+ runtime there");
     expect(skill).toContain("| Claude Code | `claude` |");
     expect(skill).toContain("New Skill in an existing source: pass `--source-id` and `--path`; omit `--repo` and `--ref`");
@@ -123,7 +133,6 @@ describe("manage-agent-skills", () => {
     expect(skill).toContain("Project scope creates `.agents/skills/<name>` plus `.claude/skills/<name>` compatibility links");
     expect(skill).toContain("Treat “remove”, “uninstall”, or equivalent wording as unlinking only");
     expect(skill).toContain("Deleting the only Skill from a third-party source removes the source too");
-    expect(skill).toContain("change-skill.sh --action delete-source");
     expect(skill).toContain("Both launchers commit straight to `main`; they never create a branch or a pull request");
     expect(skill).toContain("only then reconciles the symlinks");
     expect(skill).toContain("Every form accepts `--no-push` to keep the commit local");
@@ -137,7 +146,20 @@ describe("manage-agent-skills", () => {
     expect(skill).toContain("agent-skills.sh project unbind <project-id>");
     expect(skill).toContain("agent-skills.sh check [source]` to see how many commits a source lags behind");
     expect(skill).toContain("Both are read-only and never touch the vendor trees or the lock file");
-    expect(skill).toContain("change-skill.sh --action update-source --source <source-id>");
+    expect(skill).toContain("change-skill.sh --action update --source <source-id>");
+    expect(skill).toContain("--scope <global|project>");
+    expect(skill).toContain("[--agents <agent-id|\"*\">]");
+    expect(skill).toContain("`--agents` is required with `--scope global`");
+    expect(skill).toContain("change-skill.sh --action remove --skill <skill-name> --all");
+    expect(skill).toContain("you must choose exactly one shape: `--all`, `--scope global --agents <id|\"*\">`, or `--scope project [--project <id>]`");
+    expect(skill).toContain("For `delete`, pass exactly one of `--skill` or `--source`");
+    expect(skill).toContain("change-skill.sh --action delete --source <source-id>");
+    expect(skill).toContain("| Executing Agent | `--agents` value |");
+    expect(skill).not.toContain("agent-global");
+    expect(skill).not.toContain("all-global");
+    expect(skill).not.toContain("delete-source");
+    expect(skill).not.toContain("update-source");
+    expect(skill).not.toContain("`--agent`");
     expect(skill).toContain("change-skill.sh --action disable --skill <skill-name>");
     expect(skill).toContain("Disabling removes the symlinks; enabling rebuilds them");
     expect(skill).toContain("refuses the mutating subcommands `install`, `remove`, `delete`, `update`, `enable`, and `disable`");

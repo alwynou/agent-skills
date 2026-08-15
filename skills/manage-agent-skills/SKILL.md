@@ -16,9 +16,9 @@ Use this repository as the only owner of Skill sources and symlinks. Never insta
 - When the user means every Agent, every AI tool, or device-wide availability, use global scope for all supported Agents and do not create a project target.
 - Ask one concise question before acting when more than one interpretation remains plausible or the requested scope is absent.
 
-Global installation for one Agent uses internal adapter IDs. Pass the ID corresponding to the Agent executing this Skill; project installation can also be narrowed to one Agent, subject to the shared-directory limits below:
+`--agents` takes an internal adapter ID, or `"*"` for every supported Agent. Pass the ID corresponding to the Agent executing this Skill to install for that one Agent; a project install can likewise be narrowed to one Agent, subject to the shared-directory limits below:
 
-| Executing Agent | `--agent` value |
+| Executing Agent | `--agents` value |
 | --- | --- |
 | Codex | `codex` |
 | Claude Code | `claude` |
@@ -26,7 +26,7 @@ Global installation for one Agent uses internal adapter IDs. Pass the ID corresp
 | Pi | `pi-agent` |
 | OpenCode | `opencode` |
 
-Project scope accepts `--agent`, but the physical layout constrains it: inside a project, Codex, Kimi Code, Pi, and OpenCode share `.agents/skills`, and only Claude Code owns a separate `.claude/skills`. A Claude-only project install is exact; an install aimed at just one of the other four is physically impossible, because every Agent sharing `.agents/skills` sees the Skill. The install plan reports those extra viewers in `impliedAgents`; relay them to the user verbatim. Global scope has no such limit — every Agent owns a separate directory.
+Project scope accepts a single `--agents` ID, but the physical layout constrains it: inside a project, Codex, Kimi Code, Pi, and OpenCode share `.agents/skills`, and only Claude Code owns a separate `.claude/skills`. A Claude-only project install is exact; an install aimed at just one of the other four is physically impossible, because every Agent sharing `.agents/skills` sees the Skill. The install plan reports those extra viewers in `impliedAgents`; relay them to the user verbatim. Global scope has no such limit — every Agent owns a separate directory.
 
 ## Determine the intended operation
 
@@ -60,12 +60,14 @@ Run the shell launcher from the user’s working directory. It records that dire
 <skill-real-path>/scripts/install-skill.sh \
   --skill <skill-name> \
   --source-url <confirmed-source-url> \
-  --scope <project|agent-global|all-global> \
-  [--agent <current-agent>] \
+  --scope <global|project> \
+  [--agents <agent-id|"*">] \
   [--repo <clone-url> --source-id <source-id> --path <skill-path> --ref <ref>] \
   [--project <logical-project-id>] \
   [--no-push]
 ```
+
+`--skill`, `--source-url`, and `--scope` are required. `--agents` is required with `--scope global` — pass one adapter ID or `"*"` — and optional with `--scope project`, where it defaults to `"*"`.
 
 Choose source flags from registry state:
 
@@ -73,7 +75,7 @@ Choose source flags from registry state:
 - New Skill in an existing source: pass `--source-id` and `--path`; omit `--repo` and `--ref`.
 - New source: pass `--repo`, `--source-id`, and `--path`; pass `--ref` only when pinning a non-default ref.
 
-Do not invoke `install-skill.mjs` directly from the business project. Pass `--agent` for `agent-global`, or together with `--scope project` to narrow a project install to one Agent within the shared-directory limits above. Project scope creates `.agents/skills/<name>` plus `.claude/skills/<name>` compatibility links. The script refuses a dirty central repository, updates it to `origin/main`, reloads the updated installer when necessary, then performs the installation dry run.
+Do not invoke `install-skill.mjs` directly from the business project. Pass `--agents <id>` with `--scope global` to install for one Agent, or `--agents "*"` for every Agent globally; with `--scope project`, omit `--agents` to share the Skill with every Agent or pass one ID to narrow the install within the shared-directory limits above. Project scope creates `.agents/skills/<name>` plus `.claude/skills/<name>` compatibility links. The script refuses a dirty central repository, updates it to `origin/main`, reloads the updated installer when necessary, then performs the installation dry run.
 
 The commit title must be exactly:
 
@@ -93,17 +95,22 @@ Run the change launcher from the user’s working directory. It changes to the c
   --action remove --skill <skill-name> \
   --scope project [--project <logical-project-id>]
 
-# Remove one Agent globally, every Agent globally, or every target
+# Remove one Agent globally or every Agent globally
 <skill-real-path>/scripts/change-skill.sh \
   --action remove --skill <skill-name> \
-  --scope <agent-global|all-global|all> [--agent <current-agent>]
+  --scope global --agents <agent-id|"*">
+
+# Remove every target at once
+<skill-real-path>/scripts/change-skill.sh --action remove --skill <skill-name> --all
 
 # Completely delete one Skill or a whole third-party source
 <skill-real-path>/scripts/change-skill.sh --action delete --skill <skill-name>
-<skill-real-path>/scripts/change-skill.sh --action delete-source --source <source-id>
+<skill-real-path>/scripts/change-skill.sh --action delete --source <source-id>
 ```
 
 Every form accepts `--no-push` to keep the commit local.
+
+For `remove`, `--skill` is required and you must choose exactly one shape: `--all`, `--scope global --agents <id|"*">`, or `--scope project [--project <id>]`. `--scope global` rejects `--project`; `--scope project` rejects `--agents`. For `delete`, pass exactly one of `--skill` or `--source`.
 
 For `--scope project`, omit `--project` when running from the project checkout: the launcher derives the logical project ID from the current working directory’s Git remote, mirroring install.
 
@@ -137,7 +144,7 @@ One logical project may be checked out several times on a machine — Git worktr
 
 ## Track upstream sources
 
-Run `<skill-real-path>/scripts/agent-skills.sh check [source]` to see how many commits a source lags behind, and `agent-skills.sh diff <source>` to review the changes. Both are read-only and never touch the vendor trees or the lock file. Once the user confirms, perform the upgrade with `<skill-real-path>/scripts/change-skill.sh --action update-source --source <source-id>`; it commits the lock file and submodule pointer to `main`. Never run the raw `update` subcommand.
+Run `<skill-real-path>/scripts/agent-skills.sh check [source]` to see how many commits a source lags behind, and `agent-skills.sh diff <source>` to review the changes. Both are read-only and never touch the vendor trees or the lock file. Once the user confirms, perform the upgrade with `<skill-real-path>/scripts/change-skill.sh --action update --source <source-id>`; `--source` is required, and the launcher commits the lock file and submodule pointer to `main`. Never run the raw `update` subcommand.
 
 ## Enable or disable temporarily
 
