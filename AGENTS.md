@@ -9,6 +9,7 @@ This repository is a conservative local package manager for executable Agent Ski
 3. `update` always requires one explicit source name and must refuse dirty vendor trees.
 4. Tests that exercise agent installation must use `AGENT_SKILLS_HOME` or a temporary home. Never target the developer's real `~/.agents` or `~/.claude` directories.
 5. Keep agent-specific paths behind `AgentAdapter`; keep source-specific behavior behind source classes.
+6. Anything that writes committed state must go through a `manage-agent-skills` launcher, which commits before reconciling links. Never let the generic CLI entry point pass such a subcommand through.
 
 ## Commands
 

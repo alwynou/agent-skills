@@ -1,6 +1,6 @@
 ---
 name: manage-agent-skills
-description: Install, unlink, or completely delete Agent Skills through the central agent-skills repository. Use when the user explicitly asks to manage an existing, local, or third-party Skill for a project, one coding Agent globally, or every supported Agent globally.
+description: Install, inspect, update, enable, disable, unlink, or completely delete Agent Skills through the central agent-skills repository, and reconcile their symlinks and project bindings on this machine. Use when the user explicitly asks to manage an existing, local, or third-party Skill for a project, one coding Agent globally, or every supported Agent globally; to report what a Skill does or where it is installed; to follow an upstream source; or to repair Skills that stopped working after a pull or a machine change.
 disable-model-invocation: true
 ---
 
