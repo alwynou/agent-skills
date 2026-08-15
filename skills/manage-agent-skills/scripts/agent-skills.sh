@@ -5,9 +5,20 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 manager_root=$(CDPATH= cd -- "$script_dir/../../.." && pwd -P)
 tsx="$manager_root/node_modules/.bin/tsx"
 
+# A fresh clone has neither dependencies nor vendor checkouts, and Git hooks cannot fix
+# that because hooks are never cloned. Repair both here so any entry point works on a new
+# machine straight after `git clone`.
 if [ ! -f "$tsx" ]; then
-  echo "central agent-skills dependencies are missing; run npm install in $manager_root with Node.js 20 or newer" >&2
-  exit 1
+  echo "installing central agent-skills dependencies in $manager_root" >&2
+  (cd "$manager_root" && "$script_dir/run-with-node.sh" --exec npm ci >&2) || {
+    echo "npm ci failed; run npm install in $manager_root with Node.js 20 or newer" >&2
+    exit 1
+  }
+fi
+
+if git -C "$manager_root" submodule status 2>/dev/null | grep -q '^-'; then
+  echo "initializing vendor submodules in $manager_root" >&2
+  git -C "$manager_root" submodule update --init --recursive >&2 || exit 1
 fi
 
 # Guard: mutating subcommands rewrite registry/skills.yaml and

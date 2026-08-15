@@ -43,6 +43,8 @@ The generic CLI entry point is not a publishing path. It refuses every subcomman
 
 Publishing itself is a manager command, not launcher logic: `publish --title <t> -- <mutating command>` runs the mutation in-process and commits it. The launchers keep only what must exist before TypeScript does — locating a Node runtime, bringing the repository to `origin/main`, and re-executing themselves when that pull changed them. Every mutating command is parsed in exactly one place, so the plain and published paths cannot drift.
 
+Bootstrapping belongs to the entry points, not to Git hooks. Hooks live in `.git/hooks`, which is never cloned, so a hook cannot help the one case that needs help most: a clone on a new machine. Each entry point therefore repairs what it finds missing — dependencies and vendor submodules — and `dist/` is deliberately not among them, because every Skill path runs the TypeScript sources directly and only packaging consumes the build output.
+
 The launchers speak the manager's own vocabulary rather than inventing one: the same `--scope`, `--agents`, `--all`, and `--source` spellings, and `--action` values that are the manager's command names. They add only what the manager cannot know — the commit title, the source URL a Skill was confirmed from, and the working directory behind a project install. A second vocabulary would need a translation layer, and a translation layer is somewhere the two surfaces can disagree.
 
 ## Safety invariants
@@ -64,6 +66,7 @@ The launchers speak the manager's own vocabulary rather than inventing one: the 
 - Publishing commits committed state before reconciling links, and a failure before that commit restores a clean `main` without having touched a single link.
 - Only planned paths may be staged; a staged path outside the plan aborts the commit.
 - The generic CLI entry point refuses every subcommand that writes committed state.
+- Every entry point installs missing dependencies and initializes missing vendor submodules before running, so a fresh clone works without a separate setup step.
 - `update` requires one named source, refuses dirty worktrees, requires fast-forward ancestry, checks out the reviewed candidate, updates the lock atomically, then syncs. A source already at its candidate is a no-op with nothing to commit.
 - Tests install only into temporary home and project directories.
 

@@ -35,11 +35,13 @@ npm run build
 npm link
 ```
 
-This exposes the `agent-skills` command. You can also run commands without linking:
+This exposes the `agent-skills` command, which runs the compiled `dist/` output. You can also run commands without linking:
 
 ```bash
 npm run dev -- list
 ```
+
+The bundled Skill never needs either step: its entry points run the TypeScript sources directly and install missing dependencies and vendor submodules on first use, so a fresh clone is usable straight away.
 
 ## Repository layout
 

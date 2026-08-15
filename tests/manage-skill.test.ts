@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { changeMetadata, changeOperands, parseChangeArgs } from "../skills/manage-agent-skills/scripts/change-helpers.mjs";
 import { installOperands, parseArgs, projectIdFromRemote, run } from "../skills/manage-agent-skills/scripts/install-helpers.mjs";
-import { publishArgs } from "../skills/manage-agent-skills/scripts/bootstrap.mjs";
+import { ensureSubmodules, publishArgs } from "../skills/manage-agent-skills/scripts/bootstrap.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -59,6 +59,34 @@ describe("manage-agent-skills", () => {
       .toThrow("exactly one of --skill or --source");
     expect(() => parseChangeArgs(["--action", "delete-source", "--source", "upstream"]))
       .toThrow("--action must be remove, delete, update, enable, disable");
+  });
+
+  it("initializes vendor submodules that a fresh clone left empty", async () => {
+    const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "manage-agent-skills-submodule-"));
+    const upstream = path.join(temporaryRoot, "upstream");
+    const root = path.join(temporaryRoot, "manager");
+    const git = async (cwd: string, ...args: string[]) => execFileAsync("git", ["-C", cwd, ...args]);
+    try {
+      await fs.mkdir(path.join(upstream, "skills"), { recursive: true });
+      await execFileAsync("git", ["init", "--quiet", upstream]);
+      await fs.writeFile(path.join(upstream, "skills", "SKILL.md"), "---\nname: x\n---\n");
+      await git(upstream, "add", "-A");
+      await git(upstream, "-c", "user.name=T", "-c", "user.email=t@e.com", "commit", "--quiet", "-m", "init");
+      await fs.mkdir(root);
+      await execFileAsync("git", ["init", "--quiet", root]);
+      await git(root, "-c", "protocol.file.allow=always", "submodule", "add", "--quiet", upstream, "vendors/upstream");
+      await git(root, "-c", "user.name=T", "-c", "user.email=t@e.com", "commit", "--quiet", "-m", "add");
+      await git(root, "submodule", "deinit", "--force", "vendors/upstream");
+      expect((await git(root, "submodule", "status")).stdout.trim().startsWith("-")).toBe(true);
+
+      expect(ensureSubmodules(root)).toBe(true);
+      expect((await git(root, "submodule", "status")).stdout.trim().startsWith("-")).toBe(false);
+      expect(await fs.readFile(path.join(root, "vendors", "upstream", "skills", "SKILL.md"), "utf8")).toContain("name: x");
+      // Already initialized: nothing left to repair.
+      expect(ensureSubmodules(root)).toBe(false);
+    } finally {
+      await fs.rm(temporaryRoot, { recursive: true, force: true });
+    }
   });
 
   it("keeps the launchers free of branch and pull-request machinery", async () => {

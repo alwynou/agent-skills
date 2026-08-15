@@ -14,6 +14,19 @@ function pathsChanged(root, from, to, paths) {
 }
 
 /**
+ * A fresh clone leaves every vendor submodule uninitialized, and the Skills registered
+ * from them have no `SKILL.md` on disk until it is. Git hooks cannot cover this because
+ * hooks are never cloned, so the entry points repair it themselves.
+ */
+export function ensureSubmodules(root) {
+  const status = spawnSync("git", ["-C", root, "submodule", "status"], { encoding: "utf8" });
+  if (status.status !== 0) return false;
+  if (!status.stdout.split("\n").some((line) => line.startsWith("-"))) return false;
+  run("git", ["submodule", "update", "--init", "--recursive"], root);
+  return true;
+}
+
+/**
  * Brings the central repository to a runnable `origin/main` before anything TypeScript
  * exists. `dist/` is not committed and `node_modules` may be absent, so this stage has to
  * be plain Node on a plain shell — it is the only code that can assume nothing.
@@ -39,6 +52,7 @@ export function prepareCentralRepository(scriptPath, argv) {
     return null;
   }
   if (!fs.existsSync(tsx)) run("npm", ["ci"], root);
+  ensureSubmodules(root);
   return { root, tsx };
 }
 

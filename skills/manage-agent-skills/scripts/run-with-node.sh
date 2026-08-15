@@ -13,6 +13,12 @@ exec_node() {
   shift
   PATH="$(dirname "$selected_node"):$PATH"
   export PATH
+  # `--exec` runs a sibling of the selected Node — npm, mostly — instead of Node itself,
+  # so callers get the matching toolchain rather than whatever happens to be first on PATH.
+  if [ "${1:-}" = "--exec" ]; then
+    shift
+    exec "$@"
+  fi
   exec "$selected_node" "$@"
 }
 
