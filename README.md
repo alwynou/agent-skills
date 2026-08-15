@@ -1,5 +1,7 @@
 # Agent Skills Manager
 
+English | [简体中文](README.zh-CN.md)
+
 A small, conservative, CLI-first registry for keeping personal and third-party Agent Skills as one source of truth across Codex, Claude Code, Kimi Code, Pi, and OpenCode.
 
 The core model is:
@@ -20,6 +22,8 @@ The manager preserves the standard `SKILL.md` layout. It does not copy skills in
 - Inspect upstream changes before updating executable skill content.
 
 See [the architecture decision](docs/architecture.md) for boundaries and safety invariants.
+
+See [`skills/manage-agent-skills`](skills/manage-agent-skills/README.md) for the Skill that drives this interface from any working directory.
 
 ## Requirements
 
