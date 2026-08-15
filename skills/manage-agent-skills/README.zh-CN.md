@@ -69,7 +69,7 @@ skills/manage-agent-skills/scripts/change-skill.sh --action disable --skill revi
 skills/manage-agent-skills/scripts/change-skill.sh --action enable --skill review
 ```
 
-两个启动器都接受 `--no-push`，只保留本地 commit。
+两个启动器都接受 `--no-push`，只保留本地 commit。它们都不接受自定义 commit 标题：安装启动器会先向 registry 确认该 Skill 是否已注册，再据此命名，因此「扩大已有安装范围」不会被记成「添加」。
 
 ## 护栏为什么存在
 

@@ -69,7 +69,7 @@ skills/manage-agent-skills/scripts/change-skill.sh --action disable --skill revi
 skills/manage-agent-skills/scripts/change-skill.sh --action enable --skill review
 ```
 
-Both launchers accept `--no-push` to keep the commit local.
+Both launchers accept `--no-push` to keep the commit local. Neither takes a commit title: the installer asks the registry whether the Skill is already known and names the commit accordingly, so a run that widens an existing installation is not recorded as adding one.
 
 ## Why the guard exists
 

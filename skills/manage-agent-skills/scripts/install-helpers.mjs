@@ -5,6 +5,13 @@ export function fail(message) {
   throw new Error(message);
 }
 
+/** Runs a command only to learn whether it succeeds; output and failure are expected. */
+export function succeeds(command, args, cwd) {
+  const result = spawnSync(command, args, { cwd, encoding: "utf8", stdio: "ignore" });
+  if (result.error) throw result.error;
+  return result.status === 0;
+}
+
 export function run(command, args, cwd, options = {}) {
   const capture = options.capture === true;
   const result = spawnSync(command, args, { cwd, encoding: "utf8", stdio: capture ? "pipe" : "inherit" });
@@ -93,4 +100,14 @@ export function installOperands(values, cwd) {
     operands.push("--project-path", cwd);
   }
   return operands;
+}
+
+/**
+ * Picks the commit verb from what the operation actually does. The launcher cannot claim
+ * a Skill was added without first checking whether the registry already knows it.
+ */
+export function installTitle(values, alreadyRegistered) {
+  const skill = values.get("--skill");
+  if (!alreadyRegistered) return `feat(skills): 添加 ${skill} skill (${values.get("--source-url")})`;
+  return `chore(skills): 更新 ${skill} 的 ${values.get("--scope")} 安装`;
 }

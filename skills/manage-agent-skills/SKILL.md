@@ -79,10 +79,11 @@ Choose source flags from registry state:
 
 Do not invoke `install-skill.mjs` directly from the business project. Pass `--agents <id>` with `--scope global` to install for one Agent, or `--agents "*"` for every Agent globally; with `--scope project`, omit `--agents` to share the Skill with every Agent or pass one ID to narrow the install within the shared-directory limits above. Project scope creates `.agents/skills/<name>` plus `.claude/skills/<name>` compatibility links. The script refuses a dirty central repository, updates it to `origin/main`, reloads the updated installer when necessary, then performs the installation dry run.
 
-The commit title must be exactly:
+The launcher picks the commit title from what the install actually does, so do not pass one:
 
 ```text
-feat(skills): 添加 <skill-name> skill (<source-url>)
+feat(skills): 添加 <skill-name> skill (<source-url>)     # the Skill was not registered yet
+chore(skills): 更新 <skill-name> 的 <scope> 安装          # it was, and this changes its installation
 ```
 
 A project-scope install touches no tracked file, so it produces no commit — unless it introduces a new source, in which case the source, lock, and submodule still commit to `main`. If only local binding or links change, expect no commit either. Report the installed scope, created links, locked commit, and commit hash.

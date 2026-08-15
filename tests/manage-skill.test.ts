@@ -5,7 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { changeMetadata, changeOperands, parseChangeArgs } from "../skills/manage-agent-skills/scripts/change-helpers.mjs";
-import { installOperands, parseArgs, projectIdFromRemote, run } from "../skills/manage-agent-skills/scripts/install-helpers.mjs";
+import { installOperands, installTitle, parseArgs, projectIdFromRemote, run, succeeds } from "../skills/manage-agent-skills/scripts/install-helpers.mjs";
 import { ensureSubmodules, publishArgs } from "../skills/manage-agent-skills/scripts/bootstrap.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -26,6 +26,25 @@ describe("manage-agent-skills", () => {
       .toThrow("--scope must be global or project");
     expect(() => parseArgs(["--skill", "review", "--source-url", "https://example.com/review", "--scope", "global"]))
       .toThrow("--agents is required for global scope");
+  });
+
+  it("names the commit after what the install actually does", () => {
+    const values = parseArgs([
+      "--skill", "review", "--source-url", "https://example.com/review", "--scope", "global", "--agents", "*",
+    ]);
+    expect(installTitle(values, false)).toBe("feat(skills): 添加 review skill (https://example.com/review)");
+    // Already registered: this widens an installation, it does not add the Skill.
+    expect(installTitle(values, true)).toBe("chore(skills): 更新 review 的 global 安装");
+
+    const scoped = parseArgs([
+      "--skill", "review", "--source-url", "https://example.com/review", "--scope", "project",
+    ]);
+    expect(installTitle(scoped, true)).toBe("chore(skills): 更新 review 的 project 安装");
+  });
+
+  it("reports whether a probe command succeeded without surfacing its output", () => {
+    expect(succeeds(process.execPath, ["-e", "process.exit(0)"], process.cwd())).toBe(true);
+    expect(succeeds(process.execPath, ["-e", "console.log('noise'); process.exit(3)"], process.cwd())).toBe(false);
   });
 
   it("wraps operands in a titled publish invocation", () => {
