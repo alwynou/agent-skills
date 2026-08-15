@@ -20,6 +20,7 @@ This repository is a conservative local package manager for executable Agent Ski
 - Typecheck: `npm run typecheck`
 - Test: `npm test`
 - Full check: `npm run check`
+- Run the CLI: `npm run cli -- <command>`
 
 There is no build step and no emitted output: `tsconfig.json` sets `noEmit`, and every entry point runs the TypeScript sources through `tsx`. Do not reintroduce one without a consumer that actually needs compiled output.
 

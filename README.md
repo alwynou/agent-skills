@@ -35,10 +35,10 @@ See [`skills/manage-agent-skills`](skills/manage-agent-skills/README.md) for the
 
 ```bash
 npm install
-npm run dev -- list
+npm run cli -- list
 ```
 
-There is no build step. The TypeScript sources are the only artifact: `npm run dev` runs them through `tsx`, and so does every entry point of the bundled Skill. A fresh clone needs neither command — the Skill's entry points install missing dependencies and vendor submodules on first use.
+There is no build step. The TypeScript sources are the only artifact: `npm run cli` runs them through `tsx`, and so does every entry point of the bundled Skill. A fresh clone needs neither command — the Skill's entry points install missing dependencies and vendor submodules on first use.
 
 ## Repository layout
 
@@ -169,7 +169,7 @@ agent-skills project unbind <project> [path]
 - `enable` / `disable` flip one Skill's enabled flag, return a plan with the tracked registry change, and sync by default; `--dry-run` / `--json` inspect the plan, `--no-sync` defers reconciliation.
 - `project bind` adds this device's absolute path for a logical project, keeping any checkout already bound to it; a directory bound to a different project is refused. `project unbind <project> [path]` drops one checkout, or every checkout when the path is omitted, and refuses while that project still has managed links.
 
-Run these through `npm run dev -- <command>`, or through the bundled Skill's `scripts/agent-skills.sh`, which locates the repository for you. Use `--root <path>` or `AGENT_SKILLS_ROOT` when running outside the registry repository.
+Run these through `npm run cli -- <command>`, or through the bundled Skill's `scripts/agent-skills.sh`, which locates the repository for you. Use `--root <path>` or `AGENT_SKILLS_ROOT` when running outside the registry repository.
 
 Install an already registered Skill into one Agent globally:
 
@@ -207,7 +207,7 @@ The built-in adapters use:
 For safe experiments and automated tests, redirect all adapters:
 
 ```bash
-AGENT_SKILLS_HOME="$(mktemp -d)" npm run dev -- sync
+AGENT_SKILLS_HOME="$(mktemp -d)" npm run cli -- sync
 ```
 
 ## Example workflow

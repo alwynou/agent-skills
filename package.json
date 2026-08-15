@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "check": "npm run typecheck && npm run test",
-    "dev": "tsx src/cli.ts",
+    "cli": "tsx src/cli.ts",
     "test": "vitest run tests",
     "typecheck": "tsc -p tsconfig.json"
   },

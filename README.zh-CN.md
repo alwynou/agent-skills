@@ -35,10 +35,10 @@ Registry (what exists) → Lock (reviewed vendor commits) → Sync (which agents
 
 ```bash
 npm install
-npm run dev -- list
+npm run cli -- list
 ```
 
-没有构建步骤。TypeScript 源码就是唯一产物：`npm run dev` 通过 `tsx` 运行它，打包 Skill 的每个入口也一样。新 clone 的仓库这两条命令都不需要——Skill 的入口会在首次使用时自动安装缺失的依赖和 vendor submodule。
+没有构建步骤。TypeScript 源码就是唯一产物：`npm run cli` 通过 `tsx` 运行它，打包 Skill 的每个入口也一样。新 clone 的仓库这两条命令都不需要——Skill 的入口会在首次使用时自动安装缺失的依赖和 vendor submodule。
 
 ## 仓库结构
 
@@ -169,7 +169,7 @@ agent-skills project unbind <project> [path]
 - `enable` / `disable` 翻转一个 Skill 的启用标志，返回包含被跟踪 registry 变更的计划，默认执行 sync；`--dry-run` / `--json` 用于查看计划，`--no-sync` 延后对账。
 - `project bind` 为一个逻辑项目添加本设备的绝对路径，保留已绑定到该项目的任何 checkout；已被绑定到其他项目的目录会被拒绝。`project unbind <project> [path]` 移除一个 checkout，省略路径时移除全部 checkout；该项目仍存在受管链接时拒绝执行。
 
-这些命令通过 `npm run dev -- <command>` 运行，或通过打包 Skill 的 `scripts/agent-skills.sh`——后者会自行定位仓库。在 registry 仓库之外运行时，使用 `--root <path>` 或 `AGENT_SKILLS_ROOT`。
+这些命令通过 `npm run cli -- <command>` 运行，或通过打包 Skill 的 `scripts/agent-skills.sh`——后者会自行定位仓库。在 registry 仓库之外运行时，使用 `--root <path>` 或 `AGENT_SKILLS_ROOT`。
 
 将已注册的 Skill 全局安装到某个 Agent：
 
@@ -207,7 +207,7 @@ agent-skills install example \
 为了安全实验和自动化测试，可将所有 adapter 重定向：
 
 ```bash
-AGENT_SKILLS_HOME="$(mktemp -d)" npm run dev -- sync
+AGENT_SKILLS_HOME="$(mktemp -d)" npm run cli -- sync
 ```
 
 ## 示例工作流
