@@ -19,7 +19,8 @@ function cliArgs(values, cwd, { dryRun = false, sync = true } = {}) {
   const scope = values.get("--scope");
   const args = ["src/cli.ts", "install", values.get("--skill")];
   args.push("--scope", scope === "project" ? "project" : "global");
-  args.push("--agents", scope === "agent-global" ? values.get("--agent") : "*");
+  // `--agent` narrows either an agent-global install or a project install to one agent.
+  args.push("--agents", values.get("--agent") ?? "*");
   for (const name of ["--repo", "--source-id", "--path", "--ref"]) {
     if (values.has(name)) args.push(name, values.get(name));
   }

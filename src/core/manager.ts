@@ -2,7 +2,7 @@ import path from "node:path";
 import { builtInAdapters, type AgentAdapter } from "../agents/adapter.js";
 import type { FsPort } from "./fs.js";
 import { pathExists } from "./fs.js";
-import { agentIds, type DeleteSkillRequest, type Diagnostic, type InstallSkillPlan, type InstallSkillRequest, type RegistryConfig, type RemoveSkillRequest, type ResolvedProject, type ResolvedSkill, type SkillRemovalPlan, type SkillTargetConfig, type UpdateInfo } from "./types.js";
+import { agentIds, type AgentId, type DeleteSkillRequest, type Diagnostic, type InstallSkillPlan, type InstallSkillRequest, type RegistryConfig, type RemoveSkillRequest, type ResolvedProject, type ResolvedSkill, type SetEnabledPlan, type SetEnabledRequest, type SkillRemovalPlan, type SkillTargetConfig, type UpdateInfo, type UpdateSourcePlan, type UpdateSourceRequest } from "./types.js";
 import type { ProjectPaths } from "./paths.js";
 import type { RegistryStore } from "../registry/store.js";
 import { resolveProjects, resolveSkills } from "../registry/resolve.js";
@@ -13,6 +13,7 @@ import { ProjectExcluder } from "../installer/project-excluder.js";
 import { UserError } from "./errors.js";
 import { GitImporter } from "../sources/git-importer.js";
 import { validateRegistry } from "../registry/schema.js";
+import { describeSkill, type SkillDetail } from "./skill-detail.js";
 
 export class SkillManager {
   private readonly adapters: AgentAdapter[];
@@ -32,35 +33,63 @@ export class SkillManager {
     return resolveSkills(await this.store.readRegistry(), this.paths, await this.store.readProjectBindings());
   }
 
+  async show(skillName: string): Promise<SkillDetail> {
+    const registry = await this.store.readRegistry();
+    const config = registry.skills[skillName];
+    const skill = (await this.list()).find((candidate) => candidate.name === skillName);
+    if (!config || !skill) throw new UserError(`unknown skill ${skillName}`);
+    const lock = await this.store.readLock();
+    const external = config.source !== "local";
+    return describeSkill(this.fs, skill, {
+      repo: external ? registry.sources[config.source]?.repo ?? null : null,
+      lockedCommit: external ? lock.sources[config.source]?.commit ?? null : null,
+      skillPath: config.path,
+    });
+  }
+
   async listProjects(): Promise<ResolvedProject[]> {
     return resolveProjects(await this.store.readRegistry(), await this.store.readProjectBindings());
   }
 
-  async bindProject(projectId: string, projectPath: string): Promise<string> {
+  /** Adds one more checkout of an existing logical project on this machine. */
+  async bindProject(projectId: string, projectPath: string): Promise<string[]> {
     const registry = await this.store.readRegistry();
     if (!registry.projects.includes(projectId)) throw new UserError(`unknown project ${projectId}`);
     const root = path.resolve(projectPath);
-    if (root === path.parse(root).root) throw new UserError(`project ${projectId}.path cannot be a filesystem root`);
+    if (root === path.parse(root).root) throw new UserError(`project ${projectId} path cannot be a filesystem root`);
     if (!(await pathExists(this.fs, root))) throw new UserError(`project ${projectId} does not exist at ${root}`);
     if (!(await this.fs.lstat(root)).isDirectory()) throw new UserError(`project ${projectId} is not a directory: ${root}`);
     const bindings = await this.store.readProjectBindings();
-    bindings.projects[projectId] = { path: root };
+    const existing = bindings.projects[projectId]?.paths ?? [];
+    const paths = existing.includes(root) ? existing : [...existing, root];
+    bindings.projects[projectId] = { paths };
     resolveProjects(registry, bindings);
     await this.store.writeProjectBindings(bindings);
-    return root;
+    return paths;
   }
 
-  async unbindProject(projectId: string): Promise<void> {
+  /** Drops one checkout, or every checkout when no path is given. */
+  async unbindProject(projectId: string, projectPath?: string): Promise<string[]> {
     const registry = await this.store.readRegistry();
     if (!registry.projects.includes(projectId)) throw new UserError(`unknown project ${projectId}`);
     const bindings = await this.store.readProjectBindings();
-    if (!bindings.projects[projectId]) throw new UserError(`project ${projectId} is not bound on this device`);
+    const existing = bindings.projects[projectId]?.paths ?? [];
+    if (existing.length === 0) throw new UserError(`project ${projectId} is not bound on this device`);
+    let removing = existing;
+    if (projectPath !== undefined) {
+      const root = path.resolve(projectPath);
+      if (!existing.includes(root)) throw new UserError(`project ${projectId} is not bound to ${root}`);
+      removing = [root];
+    }
     const managed = await this.store.readManagedLinks();
-    if (managed.links.some((link) => link.scope === "project" && link.projectId === projectId)) {
+    if (managed.links.some((link) => link.scope === "project" && link.projectId === projectId && link.projectRoot !== undefined && removing.includes(link.projectRoot))) {
       throw new UserError(`project ${projectId} still has managed links; disable or remove its targets, run sync, then unbind`);
     }
-    delete bindings.projects[projectId];
+    const remaining = existing.filter((candidate) => !removing.includes(candidate));
+    if (remaining.length === 0) delete bindings.projects[projectId];
+    else bindings.projects[projectId] = { paths: remaining };
     await this.store.writeProjectBindings(bindings);
+    return remaining;
   }
 
   async sync(skillName?: string): Promise<SyncResult> {
@@ -299,6 +328,30 @@ export class SkillManager {
     };
   }
 
+  /**
+   * Codex, Kimi Code, Pi, and OpenCode all read a project's `.agents/skills` directory,
+   * so selecting a subset of that group still exposes the Skill to the rest. The link
+   * set cannot express the difference, so report which agents come along instead of
+   * pretending the selection is enforceable.
+   */
+  private async impliedProjectAgents(
+    target: { scope: "global" | "project"; agents: AgentId[] },
+    projectRoot: string | null,
+  ): Promise<AgentId[]> {
+    if (target.scope !== "project" || !projectRoot) return [];
+    const selected = new Set<AgentId>(target.agents);
+    const selectedDirectories = new Set<string>();
+    for (const adapter of this.adapters) {
+      if (selected.has(adapter.id)) selectedDirectories.add(await adapter.getProjectSkillDirectory(projectRoot));
+    }
+    const implied: AgentId[] = [];
+    for (const adapter of this.adapters) {
+      if (selected.has(adapter.id)) continue;
+      if (selectedDirectories.has(await adapter.getProjectSkillDirectory(projectRoot))) implied.push(adapter.id);
+    }
+    return implied;
+  }
+
   async install(request: InstallSkillRequest): Promise<InstallSkillPlan> {
     const identifierPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
     if (!identifierPattern.test(request.skillName)) throw new UserError("skill name must use lowercase letters, numbers, and single hyphens");
@@ -362,15 +415,17 @@ export class SkillManager {
         throw new UserError(`project is not a directory: ${projectRoot}`);
       }
       if (!registry.projects.includes(request.projectId)) registry.projects.push(request.projectId);
-      const currentBinding = bindings.projects[request.projectId];
-      if (currentBinding && path.resolve(currentBinding.path) !== projectRoot) {
-        throw new UserError(`project ${request.projectId} is already bound to ${currentBinding.path}`);
-      }
-      const otherBinding = Object.entries(bindings.projects).find(([id, value]) => id !== request.projectId && path.resolve(value.path) === projectRoot);
+      const otherBinding = Object.entries(bindings.projects).find(([id, value]) =>
+        id !== request.projectId && value.paths.some((candidate) => path.resolve(candidate) === projectRoot),
+      );
       if (otherBinding) throw new UserError(`project path is already bound to ${otherBinding[0]}`);
-      bindings.projects[request.projectId] = { path: projectRoot };
-      projectBinding = { id: request.projectId, path: projectRoot };
-      target = { scope: "project", project: request.projectId, agents: ["*"] };
+      // Installing from a second worktree of the same repository adds that checkout
+      // rather than fighting the first one for the binding.
+      const existingPaths = bindings.projects[request.projectId]?.paths ?? [];
+      const paths = existingPaths.includes(projectRoot) ? existingPaths : [...existingPaths, projectRoot];
+      bindings.projects[request.projectId] = { paths };
+      projectBinding = { id: request.projectId, path: projectRoot, paths };
+      target = { scope: "project", project: request.projectId, agents: request.agents };
     } else {
       if (request.projectId || request.projectPath) throw new UserError("project options are not allowed for global scope");
       target = { scope: "global", agents: request.agents };
@@ -405,16 +460,23 @@ export class SkillManager {
     validateRegistry(registry);
     resolveProjects(registry, bindings);
 
-    const resolvedTarget = request.scope === "global"
-      ? { scope: "global" as const, agents: request.agents.includes("*") ? this.adapters.map((adapter) => adapter.id) : request.agents.filter((agent) => agent !== "*") }
-      : { scope: "project" as const, projectId: request.projectId as string, projectRoot: projectBinding?.path ?? null, agents: this.adapters.map((adapter) => adapter.id) };
-    const fakeSkill: ResolvedSkill = { name: request.skillName, sourceId, absolutePath: "", enabled: true, targets: [resolvedTarget] };
-    const resolvedLinks = await Promise.all(resolvedTarget.agents.map(async (agent) => {
-      const adapter = this.adapters.find((candidate) => candidate.id === agent);
-      if (!adapter) throw new UserError(`no adapter registered for ${agent}`);
-      return adapter.linkPath(fakeSkill, resolvedTarget);
-    }));
+    const requestedAgents = request.agents.includes("*")
+      ? this.adapters.map((adapter) => adapter.id)
+      : request.agents.filter((agent): agent is AgentId => agent !== "*");
+    const projectRoots = request.scope === "project" ? projectBinding?.paths ?? [] : [null];
+    const resolvedLinks: string[] = [];
+    for (const projectRoot of projectRoots) {
+      for (const agent of requestedAgents) {
+        const adapter = this.adapters.find((candidate) => candidate.id === agent);
+        if (!adapter) throw new UserError(`no adapter registered for ${agent}`);
+        resolvedLinks.push(await adapter.linkPath(request.skillName, projectRoot));
+      }
+    }
     const links = [...new Set(resolvedLinks)];
+    const impliedAgents = await this.impliedProjectAgents(
+      { scope: request.scope, agents: requestedAgents },
+      projectBinding?.path ?? null,
+    );
 
     if (!request.dryRun) {
       if (sourceAdded) {
@@ -441,6 +503,7 @@ export class SkillManager {
       trackedChanges: [...trackedChanges],
       localChanges: [...localChanges],
       links,
+      impliedAgents,
       applied: !request.dryRun,
     };
   }
@@ -469,19 +532,21 @@ export class SkillManager {
       return diagnostics;
     }
     for (const project of projects) {
-      if (!project.root) {
+      if (project.roots.length === 0) {
         diagnostics.push({ level: "error", message: `${project.id}: project is not bound on this device` });
         continue;
       }
-      if (!(await pathExists(this.fs, project.root))) {
-        diagnostics.push({ level: "error", message: `${project.id}: bound path does not exist: ${project.root}` });
-        continue;
+      for (const root of project.roots) {
+        if (!(await pathExists(this.fs, root))) {
+          diagnostics.push({ level: "error", message: `${project.id}: bound path does not exist: ${root}` });
+          continue;
+        }
+        diagnostics.push(
+          (await this.fs.lstat(root)).isDirectory()
+            ? { level: "ok", message: `${project.id}: bound to ${root}` }
+            : { level: "error", message: `${project.id}: bound path is not a directory: ${root}` },
+        );
       }
-      diagnostics.push(
-        (await this.fs.lstat(project.root)).isDirectory()
-          ? { level: "ok", message: `${project.id}: bound to ${project.root}` }
-          : { level: "error", message: `${project.id}: bound path is not a directory: ${project.root}` },
-      );
     }
     for (const skill of skills) {
       const skillFile = path.join(skill.absolutePath, "SKILL.md");
@@ -570,26 +635,39 @@ export class SkillManager {
     return source.diff(locked, candidate, paths.length > 0 ? paths : ["."]);
   }
 
-  async update(sourceId: string): Promise<UpdateInfo> {
+  async update(request: UpdateSourceRequest): Promise<UpdateSourcePlan> {
     const registry = await this.store.readRegistry();
-    const lock = await this.store.readLock();
-    const config = registry.sources[sourceId];
-    if (!config) throw new UserError(`unknown source ${sourceId}`);
-    const source = new GitSource(sourceId, config, this.paths.vendors, this.git);
-    const info = await source.check(lock.sources[sourceId]?.commit ?? null);
+    const lock = structuredClone(await this.store.readLock());
+    const config = registry.sources[request.sourceId];
+    if (!config) throw new UserError(`unknown source ${request.sourceId}`);
+    const source = new GitSource(request.sourceId, config, this.paths.vendors, this.git);
+    const info = await source.check(lock.sources[request.sourceId]?.commit ?? null);
+    // Both the lock entry and the submodule gitlink move, so both must be committed.
+    const noOp = info.current === info.candidate && info.locked === info.candidate;
+    const trackedChanges = noOp
+      ? []
+      : [path.relative(this.paths.root, this.paths.lock), path.join("vendors", config.path ?? request.sourceId)];
+    if (noOp || request.dryRun) return { ...info, trackedChanges, noOp, applied: false, syncResult: null };
     await source.update(info.candidate);
-    lock.sources[sourceId] = { commit: info.candidate };
+    lock.sources[request.sourceId] = { commit: info.candidate };
     await this.store.writeLock(lock);
-    await this.sync();
-    return info;
+    return { ...info, trackedChanges, noOp, applied: true, syncResult: request.sync ? await this.sync() : null };
   }
 
-  async setEnabled(skillName: string, enabled: boolean): Promise<void> {
-    const registry = await this.store.readRegistry();
-    const skill = registry.skills[skillName];
-    if (!skill) throw new UserError(`unknown skill ${skillName}`);
-    if (enabled && skill.targets.length === 0) throw new UserError(`skill ${skillName} has no targets; install it before enabling`);
-    skill.enabled = enabled;
+  async setEnabled(request: SetEnabledRequest): Promise<SetEnabledPlan> {
+    const registry = structuredClone(await this.store.readRegistry());
+    const skill = registry.skills[request.skillName];
+    if (!skill) throw new UserError(`unknown skill ${request.skillName}`);
+    if (request.enabled && skill.targets.length === 0) {
+      throw new UserError(`skill ${request.skillName} has no targets; install it before enabling`);
+    }
+    const noOp = skill.enabled === request.enabled;
+    const trackedChanges = noOp ? [] : [path.relative(this.paths.root, this.paths.registry)];
+    const plan = { skill: request.skillName, enabled: request.enabled, trackedChanges, noOp };
+    if (noOp || request.dryRun) return { ...plan, applied: false, syncResult: null };
+    skill.enabled = request.enabled;
+    validateRegistry(registry);
     await this.store.writeRegistry(registry);
+    return { ...plan, applied: true, syncResult: request.sync ? await this.sync() : null };
   }
 }

@@ -107,10 +107,10 @@ describe("skill installation", () => {
     const projectRoot = path.join(root, "worktree");
     await fs.mkdir(projectRoot);
     const installed = await manager.install({
-      skillName: "foo", scope: "project", agents: ["claude"], projectId: "owner-app",
+      skillName: "foo", scope: "project", agents: ["*"], projectId: "owner-app",
       projectPath: projectRoot, dryRun: false, sync: true,
     });
-    expect(installed.projectBinding).toEqual({ id: "owner-app", path: projectRoot });
+    expect(installed.projectBinding).toEqual({ id: "owner-app", path: projectRoot, paths: [projectRoot] });
     expect((await store.readRegistry()).skills.foo?.targets).toEqual([
       { scope: "global", agents: ["codex"] },
       { scope: "project", project: "owner-app", agents: ["*"] },
@@ -131,5 +131,110 @@ describe("skill installation", () => {
     });
     expect(repeat.trackedChanges).toEqual([]);
     expect(repeat.localChanges).toEqual([]);
+  });
+
+  it("binds a second checkout of the same project and links the Skill into both", async () => {
+    const { root, source, store, manager } = await fixture();
+    const first = path.join(root, "worktree-a");
+    const second = path.join(root, "worktree-b");
+    await fs.mkdir(first);
+    await fs.mkdir(second);
+    await manager.install({
+      skillName: "foo", scope: "project", agents: ["claude"], projectId: "owner-app",
+      projectPath: first, repo: source, sourceId: "upstream", skillPath: "skills/foo",
+      dryRun: false, sync: true,
+    });
+
+    // The same logical project checked out twice: the second install adds a binding
+    // instead of fighting the first one for it.
+    const installed = await manager.install({
+      skillName: "foo", scope: "project", agents: ["claude"], projectId: "owner-app",
+      projectPath: second, dryRun: false, sync: true,
+    });
+
+    expect(installed.projectBinding).toEqual({ id: "owner-app", path: second, paths: [first, second] });
+    expect(installed.links.sort()).toEqual([
+      path.join(first, ".claude", "skills", "foo"),
+      path.join(second, ".claude", "skills", "foo"),
+    ].sort());
+    for (const projectRoot of [first, second]) {
+      expect(await fs.realpath(path.join(projectRoot, ".claude", "skills", "foo"))).toBe(
+        await fs.realpath(path.join(root, "vendors", "upstream", "skills", "foo")),
+      );
+    }
+    expect((await store.readRegistry()).skills.foo?.targets).toEqual([
+      { scope: "project", project: "owner-app", agents: ["claude"] },
+    ]);
+  });
+
+  it("refuses a directory already bound to a different logical project", async () => {
+    const { root, source, manager } = await fixture();
+    const shared = path.join(root, "worktree");
+    await fs.mkdir(shared);
+    await manager.install({
+      skillName: "foo", scope: "project", agents: ["claude"], projectId: "owner-app",
+      projectPath: shared, repo: source, sourceId: "upstream", skillPath: "skills/foo",
+      dryRun: false, sync: true,
+    });
+    await expect(manager.install({
+      skillName: "foo", scope: "project", agents: ["claude"], projectId: "other-app",
+      projectPath: shared, dryRun: false, sync: true,
+    })).rejects.toThrow("already bound to owner-app");
+  });
+
+  it("unbinds one checkout while keeping the rest of the project bound", async () => {
+    const { root, source, manager } = await fixture();
+    const first = path.join(root, "worktree-a");
+    const second = path.join(root, "worktree-b");
+    await fs.mkdir(first);
+    await fs.mkdir(second);
+    await manager.install({
+      skillName: "foo", scope: "project", agents: ["claude"], projectId: "owner-app",
+      projectPath: first, repo: source, sourceId: "upstream", skillPath: "skills/foo",
+      dryRun: false, sync: true,
+    });
+    await manager.install({
+      skillName: "foo", scope: "project", agents: ["claude"], projectId: "owner-app",
+      projectPath: second, dryRun: false, sync: true,
+    });
+
+    await expect(manager.unbindProject("owner-app", second)).rejects.toThrow("still has managed links");
+
+    await manager.remove({ skillName: "foo", all: true, dryRun: false, sync: true });
+    expect(await manager.unbindProject("owner-app", second)).toEqual([first]);
+    expect((await manager.listProjects()).find((project) => project.id === "owner-app")?.roots).toEqual([first]);
+  });
+
+  it("installs a project Skill for one agent that owns its own project directory", async () => {
+    const { root, source, store, manager } = await fixture();
+    const projectRoot = path.join(root, "worktree");
+    await fs.mkdir(projectRoot);
+    const installed = await manager.install({
+      skillName: "foo", scope: "project", agents: ["claude"], projectId: "owner-app",
+      projectPath: projectRoot, repo: source, sourceId: "upstream", skillPath: "skills/foo",
+      dryRun: false, sync: true,
+    });
+
+    expect((await store.readRegistry()).skills.foo?.targets).toEqual([
+      { scope: "project", project: "owner-app", agents: ["claude"] },
+    ]);
+    expect(installed.links).toEqual([path.join(projectRoot, ".claude", "skills", "foo")]);
+    expect(installed.impliedAgents).toEqual([]);
+    await expect(fs.lstat(path.join(projectRoot, ".agents", "skills", "foo"))).rejects.toThrow();
+  });
+
+  it("reports the agents that share .agents/skills when a project install names one of them", async () => {
+    const { root, source, manager } = await fixture();
+    const projectRoot = path.join(root, "worktree");
+    await fs.mkdir(projectRoot);
+    const installed = await manager.install({
+      skillName: "foo", scope: "project", agents: ["kimi-code"], projectId: "owner-app",
+      projectPath: projectRoot, repo: source, sourceId: "upstream", skillPath: "skills/foo",
+      dryRun: false, sync: true,
+    });
+
+    // The link set cannot separate them: one .agents/skills entry serves the whole group.
+    expect(installed.links).toEqual([path.join(projectRoot, ".agents", "skills", "foo")]);
+    expect(installed.impliedAgents.sort()).toEqual(["codex", "opencode", "pi-agent"]);
   });
 });

@@ -127,8 +127,11 @@ describe("manage-agent-skills", () => {
     expect(() => parseArgs([...required, "--unknown", "value"])).toThrow("unknown argument --unknown");
     expect(() => parseArgs([...required, "--skill", "bar"])).toThrow("duplicate argument --skill");
     expect(() => parseArgs([...required, "--path"])).toThrow("--path requires a value");
-    expect(() => parseArgs(["--skill", "foo", "--source-url", "https://example.com/foo", "--scope", "project", "--agent", "codex"]))
-      .toThrow("--agent is only allowed for agent-global scope");
+    // A project install may name one agent; only the all-global scope forbids it.
+    expect(parseArgs(["--skill", "foo", "--source-url", "https://example.com/foo", "--scope", "project", "--agent", "codex"]).get("--agent"))
+      .toBe("codex");
+    expect(() => parseArgs([...required, "--agent", "codex"]))
+      .toThrow("--agent is only allowed for agent-global or project scope");
   });
 
   it("derives project IDs from GitHub and other hosted Git remotes", () => {
@@ -149,13 +152,33 @@ describe("manage-agent-skills", () => {
     expect(skill).toContain("| Claude Code | `claude` |");
     expect(skill).toContain("New Skill in an existing source: pass `--source-id` and `--path`; omit `--repo` and `--ref`");
     expect(skill).toContain("Do not assume `agent-skills` is installed on `PATH`");
-    expect(skill).toContain("project scope creates `.agents/skills/<name>` plus `.claude/skills/<name>` compatibility links");
+    expect(skill).toContain("Project scope creates `.agents/skills/<name>` plus `.claude/skills/<name>` compatibility links");
     expect(skill).toContain("Treat “remove”, “uninstall”, or equivalent wording as unlinking only");
     expect(skill).toContain("Deleting the only Skill from a third-party source removes the source too");
     expect(skill).toContain("change-skill.sh --action delete-source");
     expect(skill).toContain("Both launchers commit straight to `main`; they never create a branch or a pull request");
     expect(skill).toContain("only then reconciles the symlinks");
     expect(skill).toContain("Every form accepts `--no-push` to keep the commit local");
+    expect(skill).toContain("scripts/agent-skills.sh show <skill> [--json]");
+    expect(skill).toContain("whether the project is bound on this machine for a project target");
+    expect(skill).toContain("run `<skill-real-path>/scripts/agent-skills.sh doctor` first");
+    expect(skill).toContain("run `<skill-real-path>/scripts/agent-skills.sh sync` after every `git pull`");
+    expect(skill).toContain("`.skill-manager/projects.local.yaml`, which is git-ignored");
+    expect(skill).toContain("“project X is not bound on this device”");
+    expect(skill).toContain("agent-skills.sh project bind <project-id> <path>");
+    expect(skill).toContain("agent-skills.sh project unbind <project-id>");
+    expect(skill).toContain("agent-skills.sh check [source]` to see how many commits a source lags behind");
+    expect(skill).toContain("Both are read-only and never touch the vendor trees or the lock file");
+    expect(skill).toContain("change-skill.sh --action update-source --source <source-id>");
+    expect(skill).toContain("change-skill.sh --action disable --skill <skill-name>");
+    expect(skill).toContain("Disabling removes the symlinks; enabling rebuilds them");
+    expect(skill).toContain("refuses the mutating subcommands `install`, `remove`, `delete`, `update`, `enable`, and `disable`");
+    expect(skill).toContain("(`list`, `show`, `sync`, `doctor`, `check`, `diff`, `project`)");
+    expect(skill).toContain("Codex, Kimi Code, Pi, and OpenCode share `.agents/skills`");
+    expect(skill).toContain("only Claude Code owns a separate `.claude/skills`");
+    expect(skill).toContain("reports those extra viewers in `impliedAgents`; relay them to the user verbatim");
+    expect(skill).toContain("--scope project [--project <logical-project-id>]");
+    expect(skill).toContain("derives the logical project ID from the current working directory’s Git remote");
     expect(skill).not.toContain("Draft PR");
     expect(openAiMetadata).toContain("allow_implicit_invocation: false");
   });

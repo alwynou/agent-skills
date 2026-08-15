@@ -20,8 +20,8 @@ export function parseChangeArgs(argv) {
   }
 
   const action = values.get("--action");
-  if (!action || !["remove", "delete", "delete-source"].includes(action)) {
-    fail("--action must be remove, delete, or delete-source");
+  if (!action || !["remove", "delete", "delete-source", "update-source", "enable", "disable"].includes(action)) {
+    fail("--action must be remove, delete, delete-source, update-source, enable, or disable");
   }
   if (action === "remove") {
     if (!values.has("--skill")) fail("--skill is required for remove");
@@ -32,17 +32,17 @@ export function parseChangeArgs(argv) {
     }
     if (scope === "agent-global" && !values.has("--agent")) fail("--agent is required for agent-global removal");
     if (scope !== "agent-global" && values.has("--agent")) fail("--agent is only allowed for agent-global removal");
-    if (scope === "project" && !values.has("--project")) fail("--project is required for project removal");
+    // --project may be omitted; the launcher infers it from the working directory.
     if (scope !== "project" && values.has("--project")) fail("--project is only allowed for project removal");
-  } else if (action === "delete") {
-    if (!values.has("--skill")) fail("--skill is required for delete");
+  } else if (action === "delete" || action === "enable" || action === "disable") {
+    if (!values.has("--skill")) fail(`--skill is required for ${action}`);
     for (const name of ["--source", "--scope", "--agent", "--project"]) {
-      if (values.has(name)) fail(`${name} is not allowed for delete`);
+      if (values.has(name)) fail(`${name} is not allowed for ${action}`);
     }
   } else {
-    if (!values.has("--source")) fail("--source is required for delete-source");
+    if (!values.has("--source")) fail(`--source is required for ${action}`);
     for (const name of ["--skill", "--scope", "--agent", "--project"]) {
-      if (values.has(name)) fail(`${name} is not allowed for delete-source`);
+      if (values.has(name)) fail(`${name} is not allowed for ${action}`);
     }
   }
   return values;
@@ -59,6 +59,10 @@ export function changeCliArgs(values, { dryRun = false, sync = true } = {}) {
     else args.push("--scope", "global", "--agents", scope === "agent-global" ? values.get("--agent") : "*");
   } else if (action === "delete") {
     args = ["src/cli.ts", "delete", values.get("--skill")];
+  } else if (action === "enable" || action === "disable") {
+    args = ["src/cli.ts", action, values.get("--skill")];
+  } else if (action === "update-source") {
+    args = ["src/cli.ts", "update", values.get("--source")];
   } else {
     args = ["src/cli.ts", "delete", "--source", values.get("--source")];
   }
@@ -84,5 +88,8 @@ export function changeMetadata(values) {
   if (action === "delete") {
     return { title: `chore(skills): 删除 ${values.get("--skill")} skill` };
   }
+  if (action === "enable") return { title: `chore(skills): 启用 ${values.get("--skill")} skill` };
+  if (action === "disable") return { title: `chore(skills): 停用 ${values.get("--skill")} skill` };
+  if (action === "update-source") return { title: `chore(skills): 更新 ${values.get("--source")} source` };
   return { title: `chore(skills): 删除 ${values.get("--source")} source 及其 Skills` };
 }

@@ -16,7 +16,7 @@ Use this repository as the only owner of Skill sources and symlinks. Never insta
 - When the user means every Agent, every AI tool, or device-wide availability, use global scope for all supported Agents and do not create a project target.
 - Ask one concise question before acting when more than one interpretation remains plausible or the requested scope is absent.
 
-Global installation for one Agent uses internal adapter IDs. Pass the ID corresponding to the Agent executing this Skill; project installation is shared and does not require an Agent ID:
+Global installation for one Agent uses internal adapter IDs. Pass the ID corresponding to the Agent executing this Skill; project installation can also be narrowed to one Agent, subject to the shared-directory limits below:
 
 | Executing Agent | `--agent` value |
 | --- | --- |
@@ -25,6 +25,8 @@ Global installation for one Agent uses internal adapter IDs. Pass the ID corresp
 | Kimi Code | `kimi-code` |
 | Pi | `pi-agent` |
 | OpenCode | `opencode` |
+
+Project scope accepts `--agent`, but the physical layout constrains it: inside a project, Codex, Kimi Code, Pi, and OpenCode share `.agents/skills`, and only Claude Code owns a separate `.claude/skills`. A Claude-only project install is exact; an install aimed at just one of the other four is physically impossible, because every Agent sharing `.agents/skills` sees the Skill. The install plan reports those extra viewers in `impliedAgents`; relay them to the user verbatim. Global scope has no such limit — every Agent owns a separate directory.
 
 ## Determine the intended operation
 
@@ -71,7 +73,7 @@ Choose source flags from registry state:
 - New Skill in an existing source: pass `--source-id` and `--path`; omit `--repo` and `--ref`.
 - New source: pass `--repo`, `--source-id`, and `--path`; pass `--ref` only when pinning a non-default ref.
 
-Do not invoke `install-skill.mjs` directly from the business project. Pass `--agent` only for `agent-global`; project scope creates `.agents/skills/<name>` plus `.claude/skills/<name>` compatibility links. The script refuses a dirty central repository, updates it to `origin/main`, reloads the updated installer when necessary, then performs the installation dry run.
+Do not invoke `install-skill.mjs` directly from the business project. Pass `--agent` for `agent-global`, or together with `--scope project` to narrow a project install to one Agent within the shared-directory limits above. Project scope creates `.agents/skills/<name>` plus `.claude/skills/<name>` compatibility links. The script refuses a dirty central repository, updates it to `origin/main`, reloads the updated installer when necessary, then performs the installation dry run.
 
 The commit title must be exactly:
 
@@ -89,7 +91,7 @@ Run the change launcher from the user’s working directory. It changes to the c
 # Remove one project target
 <skill-real-path>/scripts/change-skill.sh \
   --action remove --skill <skill-name> \
-  --scope project --project <logical-project-id>
+  --scope project [--project <logical-project-id>]
 
 # Remove one Agent globally, every Agent globally, or every target
 <skill-real-path>/scripts/change-skill.sh \
@@ -102,6 +104,8 @@ Run the change launcher from the user’s working directory. It changes to the c
 ```
 
 Every form accepts `--no-push` to keep the commit local.
+
+For `--scope project`, omit `--project` when running from the project checkout: the launcher derives the logical project ID from the current working directory’s Git remote, mirroring install.
 
 Removing the final target leaves the Skill disabled and available for a later reinstall. Deleting a local Skill removes its clean, tracked `skills/<name>` directory. Deleting the only Skill from a third-party source removes the source too; when other registered Skills share that source, the source, lock, and vendor remain. Whole-source deletion is explicit and atomic. Unknown, shared local, or out-of-tree content causes a safe refusal.
 
@@ -117,6 +121,28 @@ chore(skills): 删除 <source-id> source 及其 Skills
 
 It skips the commit entirely for an idempotent no-op.
 
+## Inspect Skills and diagnose problems
+
+Run `<skill-real-path>/scripts/agent-skills.sh show <skill> [--json]` to answer what a Skill does and where it is installed instead of reading files yourself. It reports the `SKILL.md` frontmatter name and description, the source, the locked commit, the path, whether the Skill is enabled, and every target — agents for a global target; project ID, agents, and whether the project is bound on this machine for a project target.
+
+When links misbehave or the user reports a Skill stopped working, run `<skill-real-path>/scripts/agent-skills.sh doctor` first. It validates the registry, the lock file, project bindings, and the presence of every Skill’s `SKILL.md`.
+
+## Keep every machine in sync
+
+The registry commits to `main`, but symlink state is per-machine. On another machine or a fresh clone, run `<skill-real-path>/scripts/agent-skills.sh sync` after every `git pull` to actually create or remove links; pulling alone changes nothing on disk.
+
+Project-scope local paths live in `.skill-manager/projects.local.yaml`, which is git-ignored. After switching machines a project Skill therefore fails with “project X is not bound on this device”. Repair it by running `agent-skills.sh project list` to inspect binding status, `agent-skills.sh project bind <project-id> <path>` to record the local path, then `agent-skills.sh sync` to rebuild links.
+
+One logical project may be checked out several times on a machine — Git worktrees or a second clone. Bind each checkout to the same project ID and every one of them receives the Skill's links; installing from a new checkout binds it automatically. A directory already bound to a different project ID is refused. `agent-skills.sh project unbind <project-id> [path]` drops one checkout, or every checkout when the path is omitted; it refuses while managed links still exist, so remove or disable the targets and run `sync` first.
+
+## Track upstream sources
+
+Run `<skill-real-path>/scripts/agent-skills.sh check [source]` to see how many commits a source lags behind, and `agent-skills.sh diff <source>` to review the changes. Both are read-only and never touch the vendor trees or the lock file. Once the user confirms, perform the upgrade with `<skill-real-path>/scripts/change-skill.sh --action update-source --source <source-id>`; it commits the lock file and submodule pointer to `main`. Never run the raw `update` subcommand.
+
+## Enable or disable temporarily
+
+Run `<skill-real-path>/scripts/change-skill.sh --action disable --skill <skill-name>` to park a Skill without deleting any target, and `--action enable --skill <skill-name>` to bring it back. Disabling removes the symlinks; enabling rebuilds them.
+
 ## How a change reaches the repository
 
 The central repository holds the user’s own Skill configuration, so `main` is the only branch that ever represents it. Both launchers commit straight to `main`; they never create a branch or a pull request.
@@ -127,6 +153,7 @@ After committing, the launcher pushes `main` unless `--no-push` was passed. A re
 
 ## Safety
 
+- `agent-skills.sh` refuses the mutating subcommands `install`, `remove`, `delete`, `update`, `enable`, and `disable` with a non-zero exit and points to the matching launcher. Use `agent-skills.sh` only for read-only or purely local commands (`list`, `show`, `sync`, `doctor`, `check`, `diff`, `project`); route everything that writes the registry or the lock file through `install-skill.sh` or `change-skill.sh`.
 - Never run Git mutations against the user’s working project; all publish commands must use the central repository path.
 - Never overwrite unknown paths, reuse a conflicting source ID, reset, stash, or clean either repository.
 - Do not bypass failed validation or authentication.

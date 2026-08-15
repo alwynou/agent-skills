@@ -41,13 +41,13 @@ describe("registry validation", () => {
     });
     const bindings = validateProjectBindings({ projects: { storefront: { path: "/work/storefront" } } });
     expect(resolveProjects(registry, bindings)).toEqual([
-      { id: "storefront", root: "/work/storefront", source: "local" },
-      { id: "admin", root: null, source: "unbound" },
+      { id: "storefront", roots: ["/work/storefront"], source: "local" },
+      { id: "admin", roots: [], source: "unbound" },
     ]);
     const [skill] = resolveSkills(registry, projectPaths("/manager"), bindings);
-    expect(skill?.targets[1]).toMatchObject({ projectId: "storefront", projectRoot: "/work/storefront" });
+    expect(skill?.targets[1]).toMatchObject({ projectId: "storefront", projectRoots: ["/work/storefront"] });
     expect(skill?.targets[1]?.agents).toHaveLength(5);
-    expect(skill?.targets[2]).toMatchObject({ projectId: "admin", projectRoot: null });
+    expect(skill?.targets[2]).toMatchObject({ projectId: "admin", projectRoots: [] });
   });
 
   it("requires explicit targets and rejects invalid target configurations", () => {
@@ -56,7 +56,8 @@ describe("registry validation", () => {
     expect(validateRegistry({ sources: {}, projects: [], skills: { idle: { source: "local", path: "skills/idle", enabled: false, targets: [] } } }).skills.idle?.targets).toEqual([]);
     expect(() => validateRegistry({ sources: {}, projects: [], skills: { bad: { source: "local", path: "skills/bad", enabled: true, targets: globalTarget(["mystery"]) } } })).toThrow("unsupported agent");
     expect(() => validateRegistry({ sources: {}, projects: [], skills: { scoped: { source: "local", path: "skills/scoped", enabled: true, targets: [{ scope: "project", project: "missing", agents: ["codex"] }] } } })).toThrow("unknown project missing");
-    expect(() => validateRegistry({ sources: {}, projects: ["app"], skills: { scoped: { source: "local", path: "skills/scoped", enabled: true, targets: [{ scope: "project", project: "app", agents: ["codex"] }] } } })).toThrow("project Skills are shared");
+    expect(validateRegistry({ sources: {}, projects: ["app"], skills: { scoped: { source: "local", path: "skills/scoped", enabled: true, targets: [{ scope: "project", project: "app", agents: ["codex"] }] } } }).skills.scoped?.targets)
+      .toEqual([{ scope: "project", project: "app", agents: ["codex"] }]);
     expect(() => validateRegistry({ sources: {}, projects: [], skills: { invalid: { source: "local", path: "skills/invalid", enabled: true, targets: [{ scope: "workspace", agents: ["codex"] }] } } })).toThrow("scope must be global or project");
   });
 
@@ -66,13 +67,13 @@ describe("registry validation", () => {
     expect(() => validateRegistry({ sources: {}, projects: ["app", "app"], skills: {} })).toThrow("duplicates");
     expect(() => validateProjectBindings({ projects: { app: { path: "../app" } } })).toThrow("must be absolute");
     const registry = validateRegistry({ sources: {}, projects: ["unsafe"], skills: {} });
-    expect(() => resolveProjects(registry, { projects: { unsafe: { path: "/" } } })).toThrow("filesystem root");
+    expect(() => resolveProjects(registry, { projects: { unsafe: { paths: ["/"] } } })).toThrow("filesystem root");
     const escaping = validateRegistry({ sources: {}, projects: [], skills: { unsafe: { source: "local", path: "../private", enabled: true, targets: globalTarget() } } });
     expect(() => resolveSkills(escaping, projectPaths("/repo"))).toThrow("escapes its source root");
   });
 
   it("rejects two logical projects bound to the same directory", () => {
     const registry = validateRegistry({ sources: {}, projects: ["one", "two"], skills: {} });
-    expect(() => resolveProjects(registry, { projects: { one: { path: "/work/app" }, two: { path: "/work/app" } } })).toThrow("resolve to the same path");
+    expect(() => resolveProjects(registry, { projects: { one: { paths: ["/work/app"] }, two: { paths: ["/work/app"] } } })).toThrow("resolve to the same path");
   });
 });

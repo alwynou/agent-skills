@@ -7,18 +7,20 @@ import { NodeFs } from "./core/fs.js";
 import { GitClient } from "./git/client.js";
 import { RegistryStore } from "./registry/store.js";
 import { errorMessage, UserError } from "./core/errors.js";
+import { formatSkillDetail } from "./core/skill-detail.js";
 import { agentIds, type AgentId, type DeleteSkillRequest, type InstallSkillRequest, type RemoveSkillRequest } from "./core/types.js";
 
 const help = `agent-skills — declarative Agent Skill manager
 
 Usage:
   agent-skills [--root <path>] list
+  agent-skills [--root <path>] show <skill> [--json]
   agent-skills [--root <path>] sync [--skill <name>]
   agent-skills [--root <path>] install <skill> --scope global --agents <agent|*>
     [--repo <url> --source-id <id> --path <skill-path> --ref <ref>]
     [--dry-run] [--json] [--no-sync]
   agent-skills [--root <path>] install <skill> --scope project --project <id> --project-path <path>
-    [--repo <url> --source-id <id> --path <skill-path> --ref <ref>]
+    [--agents <agent|*>] [--repo <url> --source-id <id> --path <skill-path> --ref <ref>]
     [--dry-run] [--json] [--no-sync]
   agent-skills [--root <path>] remove <skill> --scope global --agents <agent|*> [--dry-run] [--json] [--no-sync]
   agent-skills [--root <path>] remove <skill> --scope project --project <id> [--dry-run] [--json] [--no-sync]
@@ -28,12 +30,12 @@ Usage:
   agent-skills [--root <path>] doctor
   agent-skills [--root <path>] check [source]
   agent-skills [--root <path>] diff <source>
-  agent-skills [--root <path>] update <source>
-  agent-skills [--root <path>] enable <skill>
-  agent-skills [--root <path>] disable <skill>
+  agent-skills [--root <path>] update <source> [--dry-run] [--json] [--no-sync]
+  agent-skills [--root <path>] enable <skill> [--dry-run] [--json] [--no-sync]
+  agent-skills [--root <path>] disable <skill> [--dry-run] [--json] [--no-sync]
   agent-skills [--root <path>] project list
   agent-skills [--root <path>] project bind <project> <path>
-  agent-skills [--root <path>] project unbind <project>
+  agent-skills [--root <path>] project unbind <project> [path]
 
 Environment:
   AGENT_SKILLS_ROOT  Registry repository root
@@ -140,6 +142,14 @@ async function main(): Promise<void> {
       );
       return;
     }
+    case "show": {
+      const skillName = requireOperand(command, operands);
+      const options = parseOptions(operands.slice(1), ["--json"]);
+      for (const name of options.values.keys()) throw new UserError(`unknown show option ${name}`);
+      const detail = await manager.show(skillName);
+      console.log(options.flags.has("--json") ? JSON.stringify(detail, null, 2) : formatSkillDetail(detail));
+      return;
+    }
     case "sync": {
       const options = parseOptions(operands);
       for (const name of options.values.keys()) if (name !== "--skill") throw new UserError(`unknown sync option ${name}`);
@@ -155,13 +165,10 @@ async function main(): Promise<void> {
       for (const name of options.values.keys()) if (!allowed.has(name)) throw new UserError(`unknown install option ${name}`);
       const scope = options.values.get("--scope");
       if (scope !== "global" && scope !== "project") throw new UserError("install requires --scope global or project");
-      if (scope === "project" && options.values.has("--agents") && options.values.get("--agents") !== "*") {
-        throw new UserError("project Skills are shared; omit --agents or use --agents *");
-      }
       const request: InstallSkillRequest = {
         skillName,
         scope,
-        agents: scope === "project" ? ["*"] : parseAgents(options.values.get("--agents")),
+        agents: scope === "project" && !options.values.has("--agents") ? ["*"] : parseAgents(options.values.get("--agents")),
         ...(options.values.get("--repo") ? { repo: options.values.get("--repo") as string } : {}),
         ...(options.values.get("--source-id") ? { sourceId: options.values.get("--source-id") as string } : {}),
         ...(options.values.get("--path") ? { skillPath: options.values.get("--path") as string } : {}),
@@ -235,15 +242,32 @@ async function main(): Promise<void> {
       console.log((await manager.diff(requireOperand(command, operands))) || "No relevant changes.");
       return;
     case "update": {
-      const update = await manager.update(requireOperand(command, operands));
-      console.log(`${update.source}: updated to ${update.candidate}`);
+      const sourceId = requireOperand(command, operands);
+      const options = parseOptions(operands.slice(1), ["--dry-run", "--json", "--no-sync"]);
+      for (const name of options.values.keys()) throw new UserError(`unknown update option ${name}`);
+      const plan = await manager.update({
+        sourceId,
+        dryRun: options.flags.has("--dry-run"),
+        sync: !options.flags.has("--no-sync"),
+      });
+      if (options.flags.has("--json")) console.log(JSON.stringify(plan, null, 2));
+      else if (plan.noOp) console.log(`${plan.source}: already at ${plan.candidate.slice(0, 8)}`);
+      else console.log(`${plan.source}: ${plan.applied ? "updated" : "planned"} ${plan.current?.slice(0, 8)} → ${plan.candidate.slice(0, 8)}`);
       return;
     }
     case "enable":
     case "disable": {
-      const skill = requireOperand(command, operands);
-      await manager.setEnabled(skill, command === "enable");
-      console.log(`${skill}: ${command}d; run agent-skills sync to apply`);
+      const skillName = requireOperand(command, operands);
+      const options = parseOptions(operands.slice(1), ["--dry-run", "--json", "--no-sync"]);
+      for (const name of options.values.keys()) throw new UserError(`unknown ${command} option ${name}`);
+      const plan = await manager.setEnabled({
+        skillName,
+        enabled: command === "enable",
+        dryRun: options.flags.has("--dry-run"),
+        sync: !options.flags.has("--no-sync"),
+      });
+      if (options.flags.has("--json")) console.log(JSON.stringify(plan, null, 2));
+      else console.log(plan.noOp ? `${skillName}: already ${command}d` : `${skillName}: ${plan.applied ? `${command}d` : `planned ${command}`}`);
       return;
     }
     case "project": {
@@ -251,19 +275,28 @@ async function main(): Promise<void> {
       if (action === "list") {
         const projects = await manager.listProjects();
         if (projects.length === 0) console.log("No projects registered.");
-        else console.table(projects.map((project) => ({ project: project.id, status: project.root ? "bound" : "unbound", path: project.root ?? "-" })));
+        else {
+          console.table(projects.flatMap((project) =>
+            (project.roots.length > 0 ? project.roots : [null]).map((root) => ({
+              project: project.id,
+              status: root ? "bound" : "unbound",
+              path: root ?? "-",
+            })),
+          ));
+        }
         return;
       }
       if (action !== "bind" && action !== "unbind") throw new UserError(`unknown project command ${action}`);
       const projectId = requireOperand(`project ${action}`, operands, 1);
       if (action === "bind") {
         const projectPath = requireOperand("project bind", operands, 2);
-        console.log(`${projectId}: bound to ${await manager.bindProject(projectId, projectPath)}`);
+        const paths = await manager.bindProject(projectId, projectPath);
+        console.log(`${projectId}: bound to ${paths.join(", ")}`);
         return;
       }
       if (action === "unbind") {
-        await manager.unbindProject(projectId);
-        console.log(`${projectId}: unbound`);
+        const remaining = await manager.unbindProject(projectId, operands[2]);
+        console.log(remaining.length > 0 ? `${projectId}: still bound to ${remaining.join(", ")}` : `${projectId}: unbound`);
         return;
       }
       return;

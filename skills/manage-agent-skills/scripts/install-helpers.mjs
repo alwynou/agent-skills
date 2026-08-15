@@ -44,7 +44,7 @@ export function parseArgs(argv) {
   const scope = values.get("--scope");
   if (!["project", "agent-global", "all-global"].includes(scope)) fail("--scope must be project, agent-global, or all-global");
   if (scope === "agent-global" && !values.has("--agent")) fail("--agent is required for agent-global scope");
-  if (scope !== "agent-global" && values.has("--agent")) fail("--agent is only allowed for agent-global scope");
+  if (scope === "all-global" && values.has("--agent")) fail("--agent is only allowed for agent-global or project scope");
   return values;
 }
 

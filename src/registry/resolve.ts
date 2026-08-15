@@ -19,17 +19,21 @@ export function resolveProjects(
   const resolved: ResolvedProject[] = [];
   const projectIdsByRoot = new Map<string, string>();
   for (const id of registry.projects) {
-    const localPath = bindings.projects[id]?.path;
-    if (!localPath) {
-      resolved.push({ id, root: null, source: "unbound" });
+    const localPaths = bindings.projects[id]?.paths ?? [];
+    if (localPaths.length === 0) {
+      resolved.push({ id, roots: [], source: "unbound" });
       continue;
     }
-    const root = path.resolve(localPath);
-    if (root === path.parse(root).root) throw new UserError(`project ${id}.path cannot be a filesystem root`);
-    const duplicate = projectIdsByRoot.get(root);
-    if (duplicate) throw new UserError(`projects ${duplicate} and ${id} resolve to the same path`);
-    projectIdsByRoot.set(root, id);
-    resolved.push({ id, root, source: "local" });
+    const roots: string[] = [];
+    for (const localPath of localPaths) {
+      const root = path.resolve(localPath);
+      if (root === path.parse(root).root) throw new UserError(`project ${id}.paths cannot contain a filesystem root`);
+      const duplicate = projectIdsByRoot.get(root);
+      if (duplicate && duplicate !== id) throw new UserError(`projects ${duplicate} and ${id} resolve to the same path`);
+      projectIdsByRoot.set(root, id);
+      if (!roots.includes(root)) roots.push(root);
+    }
+    resolved.push({ id, roots, source: "local" });
   }
   return resolved;
 }
@@ -39,7 +43,7 @@ export function resolveSkills(
   paths: ProjectPaths,
   bindings: ProjectBindingsConfig = { projects: {} },
 ): ResolvedSkill[] {
-  const projectRoots = new Map(resolveProjects(registry, bindings).map((project) => [project.id, project.root]));
+  const projectRoots = new Map(resolveProjects(registry, bindings).map((project) => [project.id, project.roots]));
   return Object.entries(registry.skills).map(([name, skill]) => {
     const sourceRoot =
       skill.source === "local"
@@ -48,8 +52,7 @@ export function resolveSkills(
     const targets: ResolvedSkillTarget[] = skill.targets.map((target) => {
       const agents = target.agents.includes("*") ? [...agentIds] : target.agents.filter((id) => id !== "*");
       if (target.scope === "global") return { scope: "global", agents };
-      const projectRoot = projectRoots.get(target.project) ?? null;
-      return { scope: "project", projectId: target.project, projectRoot, agents };
+      return { scope: "project", projectId: target.project, projectRoots: projectRoots.get(target.project) ?? [], agents };
     });
     return {
       name,

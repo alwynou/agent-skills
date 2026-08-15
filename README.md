@@ -108,9 +108,9 @@ skills:
           - "*"
 ```
 
-Every skill uses explicit `targets`. A skill can be global, project-scoped, installed in multiple projects, or installed at both scopes. Global targets select individual Agents. Project targets must use `agents: ["*"]`: the manager creates one shared `.agents/skills/<name>` link plus a `.claude/skills/<name>` compatibility link, making the Skill available to every supported Agent in that project. A disabled Skill may have `targets: []`; this is the retained state after its final installation target is removed.
+Every skill uses explicit `targets`. A skill can be global, project-scoped, installed in multiple projects, or installed at both scopes. Global targets select individual Agents, and every Agent's global directory is independent. Project targets may select individual Agents too, but Codex, Kimi Code, Pi, and OpenCode all read the same `.agents/skills/<name>` link in a project (only Claude Code has a separate `.claude/skills/<name>`), so selecting one of those four physically exposes the Skill to the others as well; the install plan lists them as `impliedAgents`. Use `agents: ["*"]` to select every Agent explicitly. A disabled Skill may have `targets: []`; this is the retained state after its final installation target is removed.
 
-The registry stores portable logical project names, never machine paths. Bind each project once on every device; relative CLI paths are resolved to absolute paths before being stored in the ignored `.skill-manager/projects.local.yaml` file:
+The registry stores portable logical project names, never machine paths. Bind each project on every device; relative CLI paths are resolved to absolute paths before being stored in the ignored `.skill-manager/projects.local.yaml` file. A logical project may be bound to several checkouts on one machine — Git worktrees or a second clone — and every bound checkout receives the project's links:
 
 ```bash
 agent-skills project bind storefront ../storefront
@@ -140,9 +140,10 @@ Every registered skill directory must contain `SKILL.md`. Registry paths are con
 
 ```bash
 agent-skills list
+agent-skills show <skill> [--json]
 agent-skills sync [--skill <name>]
 agent-skills install <skill> --scope global --agents <agent|*> [options]
-agent-skills install <skill> --scope project --project <id> --project-path <path> [options]
+agent-skills install <skill> --scope project --project <id> --project-path <path> [--agents <agent|*>] [options]
 agent-skills remove <skill> --scope global --agents <agent|*> [--dry-run] [--json] [--no-sync]
 agent-skills remove <skill> --scope project --project <id> [--dry-run] [--json] [--no-sync]
 agent-skills remove <skill> --all [--dry-run] [--json] [--no-sync]
@@ -151,26 +152,27 @@ agent-skills delete --source <source-id> [--dry-run] [--json] [--no-sync]
 agent-skills doctor
 agent-skills check [source]
 agent-skills diff <source>
-agent-skills update <source>
-agent-skills enable <skill>
-agent-skills disable <skill>
+agent-skills update <source> [--dry-run] [--json] [--no-sync]
+agent-skills enable <skill> [--dry-run] [--json] [--no-sync]
+agent-skills disable <skill> [--dry-run] [--json] [--no-sync]
 agent-skills project list
 agent-skills project bind <project> <path>
-agent-skills project unbind <project>
+agent-skills project unbind <project> [path]
 ```
 
 - `list` shows one row per resolved target, including scope, project, agents, and source path.
+- `show` prints one Skill's frontmatter title and description, source, locked commit, path, enabled state, and every target; `--json` emits the same detail machine-readably.
 - `sync` reconciles symlinks for enabled skills. `--skill` limits reconciliation to one Skill while preserving every other managed link.
-- `install` registers or extends a Skill target, optionally imports and pins a new Git source, and supports mutation-free `--dry-run --json` planning.
+- `install` registers or extends a Skill target, optionally imports and pins a new Git source, and supports mutation-free `--dry-run --json` planning. Project installs accept `--agents <agent|*>`; any agent that shares a project skills directory with the selection is listed in the plan's `impliedAgents`.
 - `remove` deletes matching target records and their managed links while retaining the Skill; removing its final target disables it.
-- `delete <skill>` removes the Skill record, all of its managed links, and owned local content. An exclusive third-party source is removed too, while a source shared by other registered Skills is retained.
-- `delete --source <id>` explicitly removes a third-party source, every Skill registered from it, its lock, submodule, vendor checkout, links, and managed Git exclude entries. It refuses `local` and dirty vendors.
+- `delete <skill>` removes the Skill record, all of its managed links, and owned local content. It refuses local Skills with modified, untracked, or ignored content — those paths may be user data, so the error lists them — while an exclusive third-party source is removed too, and a source shared by other registered Skills is retained.
+- `delete --source <id>` explicitly removes a third-party source, every Skill registered from it, its lock, submodule, vendor checkout, links, and managed Git exclude entries. It refuses `local`, refuses vendors with modified or untracked content, and treats uninitialized submodules as clean. Ignored content inside the vendor (rebuildable build output) is deleted along with it and reported in the plan's `ignoredPaths`.
 - `doctor` validates registry/lock files, projects, sources, `SKILL.md` files, commits, links, and managed Git excludes.
 - `check` fetches remote refs and reports candidates without changing working trees or locks.
 - `diff` shows changes between the locked and upstream candidate commit, scoped to relevant skill paths.
-- `update` updates exactly one clean Git source, writes its lock, and syncs.
-- `enable` / `disable` edit the registry; run `sync` to apply the new state.
-- `project bind` records this device's absolute path for a logical project; `project unbind` refuses while that project still has managed links.
+- `update` updates exactly one clean Git source, writes its lock, and syncs; `--dry-run --json` returns the plan's tracked changes without touching the tree or lock.
+- `enable` / `disable` flip one Skill's enabled flag, return a plan with the tracked registry change, and sync by default; `--dry-run` / `--json` inspect the plan, `--no-sync` defers reconciliation.
+- `project bind` adds this device's absolute path for a logical project, keeping any checkout already bound to it; a directory bound to a different project is refused. `project unbind <project> [path]` drops one checkout, or every checkout when the path is omitted, and refuses while that project still has managed links.
 
 Use `--root <path>` or `AGENT_SKILLS_ROOT` when running outside the registry repository.
 
@@ -193,7 +195,7 @@ agent-skills install example \
   --project-path /absolute/path/to/app
 ```
 
-The bundled `manage-agent-skills` Skill discovers sources, asks for confirmation before pulling name-only matches, invokes this interface, and commits tracked install, remove, or delete changes straight onto `main` before reconciling the symlinks. Pass `--no-push` to keep the commit local.
+The bundled `manage-agent-skills` Skill discovers sources, asks for confirmation before pulling name-only matches, invokes this interface, and commits tracked install, remove, or delete changes straight onto `main` before reconciling the symlinks. Pass `--no-push` to keep the commit local. Its `agent-skills.sh` entry point refuses the mutating subcommands (`install`, `remove`, `delete`, `update`, `enable`, `disable`) — those would leave the tracked registry and lock files dirty without committing — and directs each to the dedicated `install-skill.sh` / `change-skill.sh` launchers, which commit on `main`; read-only and purely local commands pass straight through.
 
 ## Installation destinations
 

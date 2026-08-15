@@ -1,6 +1,5 @@
 import path from "node:path";
-import type { AgentId, ResolvedSkill, ResolvedSkillTarget } from "../core/types.js";
-import { UserError } from "../core/errors.js";
+import type { AgentId } from "../core/types.js";
 
 export interface AgentAdapter {
   id: AgentId;
@@ -8,7 +7,8 @@ export interface AgentAdapter {
   detect(): Promise<boolean>;
   getGlobalSkillDirectory(): Promise<string>;
   getProjectSkillDirectory(projectRoot: string): Promise<string>;
-  linkPath(skill: ResolvedSkill, target: ResolvedSkillTarget): Promise<string>;
+  /** Passing `null` asks for the Agent's global directory instead of a project one. */
+  linkPath(skillName: string, projectRoot: string | null): Promise<string>;
 }
 
 abstract class HomeAgentAdapter implements AgentAdapter {
@@ -31,16 +31,11 @@ abstract class HomeAgentAdapter implements AgentAdapter {
     return path.join(projectRoot, this.projectRelativeDirectory);
   }
 
-  async linkPath(skill: ResolvedSkill, target: ResolvedSkillTarget): Promise<string> {
-    let directory: string;
-    if (target.scope === "global") {
-      directory = await this.getGlobalSkillDirectory();
-    } else {
-      const projectRoot = target.projectRoot;
-      if (!projectRoot) throw new UserError(`project ${target.projectId} is not bound on this device`);
-      directory = await this.getProjectSkillDirectory(projectRoot);
-    }
-    return path.join(directory, skill.name);
+  async linkPath(skillName: string, projectRoot: string | null): Promise<string> {
+    const directory = projectRoot === null
+      ? await this.getGlobalSkillDirectory()
+      : await this.getProjectSkillDirectory(projectRoot);
+    return path.join(directory, skillName);
   }
 }
 

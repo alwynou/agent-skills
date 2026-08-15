@@ -42,28 +42,41 @@ export class Synchronizer {
         throw new UserError(`skill ${skill.name} is missing SKILL.md at ${skill.absolutePath}`);
       }
       for (const target of skill.targets) {
-        let projectRoot: string | undefined;
-        if (target.scope === "project") {
-          if (!target.projectRoot) throw new UserError(`project ${target.projectId} is not bound on this device`);
-          projectRoot = target.projectRoot;
-          if (!(await pathExists(this.fs, target.projectRoot)))
-            throw new UserError(`project ${target.projectId} does not exist at ${target.projectRoot}`);
-          const stat = await this.fs.lstat(target.projectRoot);
-          if (!stat.isDirectory()) throw new UserError(`project ${target.projectId} is not a directory: ${target.projectRoot}`);
+        if (target.scope === "global") {
+          for (const agent of target.agents) {
+            const adapter = adapters.get(agent);
+            if (!adapter) throw new UserError(`no adapter registered for ${agent}`);
+            desired.push({
+              agents: [agent],
+              skill: skill.name,
+              scope: "global",
+              linkPath: await adapter.linkPath(skill.name, null),
+              targetPath: skill.absolutePath,
+            });
+          }
+          continue;
         }
-        for (const agent of target.agents) {
-          const adapter = adapters.get(agent);
-          if (!adapter) throw new UserError(`no adapter registered for ${agent}`);
-          desired.push({
-            agents: [agent],
-            skill: skill.name,
-            scope: target.scope,
-            ...(target.scope === "project"
-              ? { projectId: target.projectId, projectRoot: projectRoot as string }
-              : {}),
-            linkPath: await adapter.linkPath(skill, target),
-            targetPath: skill.absolutePath,
-          });
+        if (target.projectRoots.length === 0) throw new UserError(`project ${target.projectId} is not bound on this device`);
+        // One logical project may be checked out several times on this machine; each
+        // checkout gets its own link so every worktree sees the same Skills.
+        for (const projectRoot of target.projectRoots) {
+          if (!(await pathExists(this.fs, projectRoot)))
+            throw new UserError(`project ${target.projectId} does not exist at ${projectRoot}`);
+          if (!(await this.fs.lstat(projectRoot)).isDirectory())
+            throw new UserError(`project ${target.projectId} is not a directory: ${projectRoot}`);
+          for (const agent of target.agents) {
+            const adapter = adapters.get(agent);
+            if (!adapter) throw new UserError(`no adapter registered for ${agent}`);
+            desired.push({
+              agents: [agent],
+              skill: skill.name,
+              scope: "project",
+              projectId: target.projectId,
+              projectRoot,
+              linkPath: await adapter.linkPath(skill.name, projectRoot),
+              targetPath: skill.absolutePath,
+            });
+          }
         }
       }
     }

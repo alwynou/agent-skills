@@ -37,7 +37,7 @@ async function fixture() {
   const projectTarget: ResolvedSkillTarget = {
     scope: "project",
     projectId: "app",
-    projectRoot,
+    projectRoots: [projectRoot],
     agents: ["codex", "claude", "kimi-code", "pi-agent", "opencode"],
   };
   const skill = (targets: ResolvedSkillTarget[]): ResolvedSkill => ({
@@ -223,7 +223,7 @@ describe("synchronizer", () => {
     const missingTarget: ResolvedSkillTarget = {
       scope: "project",
       projectId: "missing",
-      projectRoot: null,
+      projectRoots: [],
       agents: ["codex", "claude", "kimi-code", "pi-agent", "opencode"],
     };
     await expect(synchronizer.sync([skill([globalTarget, missingTarget])])).rejects.toThrow("is not bound");
@@ -251,7 +251,7 @@ describe("synchronizer", () => {
     const targets: ResolvedSkillTarget[] = [firstRoot, secondRoot].map((root, index) => ({
       scope: "project",
       projectId: `project-${index}`,
-      projectRoot: root,
+      projectRoots: [root],
       agents: ["codex", "claude", "kimi-code", "pi-agent", "opencode"],
     }));
     await synchronizer.sync([skill(targets)]);

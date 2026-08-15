@@ -11,7 +11,8 @@ export interface GitSourceConfig {
 export type SourceConfig = GitSourceConfig;
 
 export interface ProjectBindingsConfig {
-  projects: Record<string, { path: string }>;
+  /** One logical project may exist at several checkouts on a single machine. */
+  projects: Record<string, { paths: string[] }>;
 }
 
 export interface GlobalSkillTargetConfig {
@@ -61,14 +62,14 @@ export interface ResolvedProjectSkillTarget {
   scope: "project";
   agents: AgentId[];
   projectId: string;
-  projectRoot: string | null;
+  projectRoots: string[];
 }
 
 export type ResolvedSkillTarget = ResolvedGlobalSkillTarget | ResolvedProjectSkillTarget;
 
 export interface ResolvedProject {
   id: string;
-  root: string | null;
+  roots: string[];
   source: "local" | "unbound";
 }
 
@@ -100,6 +101,42 @@ export interface UpdateInfo {
   behind: number | null;
 }
 
+export interface SyncResultSummary {
+  created: string[];
+  removed: string[];
+  unchanged: string[];
+  skipped: string[];
+}
+
+export interface UpdateSourceRequest {
+  sourceId: string;
+  dryRun: boolean;
+  sync: boolean;
+}
+
+export interface UpdateSourcePlan extends UpdateInfo {
+  trackedChanges: string[];
+  noOp: boolean;
+  applied: boolean;
+  syncResult: SyncResultSummary | null;
+}
+
+export interface SetEnabledRequest {
+  skillName: string;
+  enabled: boolean;
+  dryRun: boolean;
+  sync: boolean;
+}
+
+export interface SetEnabledPlan {
+  skill: string;
+  enabled: boolean;
+  trackedChanges: string[];
+  noOp: boolean;
+  applied: boolean;
+  syncResult: SyncResultSummary | null;
+}
+
 export interface InstallSkillRequest {
   skillName: string;
   scope: "global" | "project";
@@ -119,10 +156,12 @@ export interface InstallSkillPlan {
   source: { id: string; repo: string | null; commit: string | null; added: boolean };
   skillPath: string;
   target: SkillTargetConfig;
-  projectBinding: { id: string; path: string } | null;
+  projectBinding: { id: string; path: string; paths: string[] } | null;
   trackedChanges: string[];
   localChanges: string[];
   links: string[];
+  /** Agents that also see a project Skill because they share its skills directory. */
+  impliedAgents: AgentId[];
   applied: boolean;
 }
 
@@ -155,10 +194,5 @@ export interface SkillRemovalPlan {
   ignoredPaths: string[];
   noOp: boolean;
   applied: boolean;
-  syncResult: {
-    created: string[];
-    removed: string[];
-    unchanged: string[];
-    skipped: string[];
-  } | null;
+  syncResult: SyncResultSummary | null;
 }

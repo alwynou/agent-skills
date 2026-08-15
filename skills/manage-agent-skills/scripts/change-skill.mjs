@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { changeCliArgs, changeMetadata, changeSyncArgs, parseChangeArgs } from "./change-helpers.mjs";
 import { commitOnMain, readJson } from "./publish.mjs";
-import { fail, run } from "./install-helpers.mjs";
+import { fail, inferProjectId, run } from "./install-helpers.mjs";
 
 function pathsChanged(root, from, to, paths) {
   const result = spawnSync("git", ["-C", root, "diff", "--quiet", from, to, "--", ...paths]);
@@ -17,6 +17,11 @@ function pathsChanged(root, from, to, paths) {
 }
 
 const values = parseChangeArgs(process.argv.slice(2));
+// Removing a project target should be as directory-aware as installing one, so derive
+// the logical project ID the same way rather than making the caller look it up.
+if (values.get("--scope") === "project" && !values.has("--project")) {
+  values.set("--project", inferProjectId(path.resolve(values.get("--workdir") ?? process.cwd())));
+}
 const scriptPath = fs.realpathSync(fileURLToPath(import.meta.url));
 const root = path.resolve(path.dirname(scriptPath), "../../..");
 if (!fs.existsSync(path.join(root, "registry", "skills.yaml"))) fail(`cannot locate central agent-skills repository from ${scriptPath}`);

@@ -83,10 +83,7 @@ export function validateRegistry(value: unknown): RegistryConfig {
       if (target.scope === "project") {
         const project = requiredString(target.project, `${label}.project`);
         if (!projects.includes(project)) throw new UserError(`${label} references unknown project ${project}`);
-        if (targetAgents.length !== 1 || targetAgents[0] !== "*") {
-          throw new UserError(`${label}.agents must be ["*"] because project Skills are shared by all supported agents`);
-        }
-        return { scope: "project", project, agents: ["*"] };
+        return { scope: "project", project, agents: targetAgents };
       }
       throw new UserError(`${label}.scope must be global or project`);
     });
@@ -107,9 +104,16 @@ export function validateProjectBindings(value: unknown): ProjectBindingsConfig {
   const projects: ProjectBindingsConfig["projects"] = {};
   for (const [id, candidate] of Object.entries(projectInput)) {
     if (id.trim() === "" || !isRecord(candidate)) throw new UserError(`project binding ${id || "<empty>"} must be a mapping`);
-    const projectPath = requiredString(candidate.path, `project binding ${id}.path`);
-    if (!path.isAbsolute(projectPath)) throw new UserError(`project binding ${id}.path must be absolute`);
-    projects[id] = { path: path.resolve(projectPath) };
+    // Accept the historical single-path shape so machines written by older versions
+    // keep resolving without a migration step.
+    const raw = candidate.paths ?? (candidate.path === undefined ? [] : [candidate.path]);
+    if (!Array.isArray(raw) || raw.length === 0) throw new UserError(`project binding ${id} must list at least one path`);
+    const paths = raw.map((value, index) => {
+      const projectPath = requiredString(value, `project binding ${id}.paths[${index}]`);
+      if (!path.isAbsolute(projectPath)) throw new UserError(`project binding ${id}.paths[${index}] must be absolute`);
+      return path.resolve(projectPath);
+    });
+    projects[id] = { paths: [...new Set(paths)] };
   }
   return { projects };
 }
