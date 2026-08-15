@@ -155,6 +155,7 @@ agent-skills diff <source>
 agent-skills update <source> [--dry-run] [--json] [--no-sync]
 agent-skills enable <skill> [--dry-run] [--json] [--no-sync]
 agent-skills disable <skill> [--dry-run] [--json] [--no-sync]
+agent-skills publish --title <commit-title> [--no-push] -- <mutating command> [args...]
 agent-skills project list
 agent-skills project bind <project> <path>
 agent-skills project unbind <project> [path]
@@ -167,6 +168,7 @@ agent-skills project unbind <project> [path]
 - `remove` deletes matching target records and their managed links while retaining the Skill; removing its final target disables it.
 - `delete <skill>` removes the Skill record, all of its managed links, and owned local content. It refuses local Skills with modified, untracked, or ignored content — those paths may be user data, so the error lists them — while an exclusive third-party source is removed too, and a source shared by other registered Skills is retained.
 - `delete --source <id>` explicitly removes a third-party source, every Skill registered from it, its lock, submodule, vendor checkout, links, and managed Git exclude entries. It refuses `local`, refuses vendors with modified or untracked content, and treats uninitialized submodules as clean. Ignored content inside the vendor (rebuildable build output) is deleted along with it and reported in the plan's `ignoredPaths`.
+- `publish` runs one mutating command, commits its tracked changes on `main`, reconciles the links, and pushes unless `--no-push` is passed. Validation is scoped to the changed paths, and a failure before the commit restores a clean `main` without touching a link.
 - `doctor` validates registry/lock files, projects, sources, `SKILL.md` files, commits, links, and managed Git excludes.
 - `check` fetches remote refs and reports candidates without changing working trees or locks.
 - `diff` shows changes between the locked and upstream candidate commit, scoped to relevant skill paths.

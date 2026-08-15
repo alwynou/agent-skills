@@ -4,7 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
-import { commitOnMain } from "../skills/manage-agent-skills/scripts/publish.mjs";
+import { publish, touchesRuntime } from "../src/publish/publisher.js";
+import { NodeCommand, type CommandPort, type CommandResult } from "../src/publish/process.js";
+import type { MutationPlan } from "../src/command/mutations.js";
+import type { SyncResultSummary } from "../src/core/types.js";
 
 const execFileAsync = promisify(execFile);
 const temporaryDirectories: string[] = [];
@@ -17,18 +20,43 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
   return (await execFileAsync("git", ["-C", cwd, ...args])).stdout.trim();
 }
 
-/**
- * Builds a central repository with a bare origin and a stub manager binary. The stub
- * stands in for `tsx src/cli.ts`: it records every invocation with the HEAD visible at
- * that moment, so a test can prove the ordering of apply, validate, commit, and sync.
- */
-async function fixture(options: { failValidation?: boolean } = {}) {
+const emptySync: SyncResultSummary = { created: [], removed: [], unchanged: [], skipped: [] };
+
+function removalPlan(trackedChanges: string[]): MutationPlan {
+  return {
+    action: "delete",
+    skills: ["example"],
+    sourceId: null,
+    target: null,
+    trackedChanges,
+    links: [],
+    retainedSource: false,
+    ignoredPaths: [],
+    noOp: false,
+    applied: false,
+    syncResult: null,
+  };
+}
+
+type Override = (command: string, args: string[]) => CommandResult | null;
+
+/** Records the commands publishing runs, and lets a test force one of them to fail. */
+class RecordingCommand implements CommandPort {
+  readonly calls: string[] = [];
+
+  constructor(private readonly override: Override = () => null) {}
+
+  async run(command: string, args: string[], cwd: string): Promise<CommandResult> {
+    this.calls.push(`${command} ${args[0] ?? ""}`);
+    return this.override(command, args) ?? new NodeCommand().run(command, args, cwd);
+  }
+}
+
+async function fixture() {
   const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "agent-skills-publish-"));
   temporaryDirectories.push(temporaryRoot);
   const root = path.join(temporaryRoot, "central");
   const origin = path.join(temporaryRoot, "origin.git");
-  const log = path.join(temporaryRoot, "calls.log");
-
   await execFileAsync("git", ["init", "--quiet", "--bare", "--initial-branch=main", origin]);
   await fs.mkdir(path.join(root, "registry"), { recursive: true });
   await execFileAsync("git", ["init", "--quiet", "--initial-branch=main", root]);
@@ -39,75 +67,66 @@ async function fixture(options: { failValidation?: boolean } = {}) {
   await git(root, "add", "-A");
   await git(root, "commit", "--quiet", "-m", "fixture");
   await git(root, "push", "--quiet", "-u", "origin", "main");
-
-  const tsx = path.join(temporaryRoot, "fake-tsx");
-  await fs.writeFile(
-    tsx,
-    [
-      "#!/bin/sh",
-      `printf '%s | %s\\n' "$2" "$(git -C ${JSON.stringify(root)} rev-parse HEAD)" >> ${JSON.stringify(log)}`,
-      "case \"$2\" in",
-      "  list)",
-      options.failValidation ? "    echo 'registry broke' >&2; exit 1 ;;" : "    echo 'ok' ;;",
-      "  sync)",
-      "    echo 'created 0, removed 1, unchanged 0' ;;",
-      "  *)",
-      `    printf 'changed\\n' >> ${JSON.stringify(path.join(root, "registry", "skills.yaml"))}`,
-      "    echo '{\"action\":\"delete\",\"skills\":[\"example\"],\"retainedSource\":false}' ;;",
-      "esac",
-      "",
-    ].join("\n"),
-  );
-  await fs.chmod(tsx, 0o755);
-
-  return { root, origin, tsx, log, revision: await git(root, "rev-parse", "HEAD") };
+  const registry = path.join(root, "registry", "skills.yaml");
+  return { root, origin, registry, revision: await git(root, "rev-parse", "HEAD") };
 }
 
-async function readLog(log: string): Promise<string[]> {
-  return (await fs.readFile(log, "utf8")).trim().split("\n");
-}
+describe("touchesRuntime", () => {
+  it("scopes validation to the paths a change actually touches", () => {
+    expect(touchesRuntime(["registry/skills.yaml", ".skill-manager/lock.yaml", "vendors/upstream", ".gitmodules"])).toBe(false);
+    expect(touchesRuntime(["registry/skills.yaml", "src/core/manager.ts"])).toBe(true);
+    expect(touchesRuntime(["skills/manage-agent-skills/SKILL.md"])).toBe(true);
+    expect(touchesRuntime(["package-lock.json"])).toBe(true);
+  });
+});
 
-describe("commitOnMain", () => {
+describe("publish", () => {
   it("commits on main, syncs after the commit, and pushes without creating a branch", async () => {
-    const { root, tsx, log, revision } = await fixture();
-    const result = commitOnMain({
+    const { root, registry } = await fixture();
+    const commands = new RecordingCommand();
+    let syncedAtCommit: string | null = null;
+
+    const result = await publish(commands, {
       root,
-      tsx,
-      plan: { trackedChanges: ["registry/skills.yaml"] },
       title: "chore(skills): 删除 example skill",
-      applyArgs: ["src/cli.ts", "delete", "example", "--no-sync", "--json"],
-      syncArgs: ["src/cli.ts", "sync"],
       push: true,
+      apply: async ({ dryRun }) => {
+        if (!dryRun) await fs.appendFile(registry, "changed\n");
+        return removalPlan(["registry/skills.yaml"]);
+      },
+      sync: async () => {
+        syncedAtCommit = await git(root, "rev-parse", "HEAD");
+        return { ...emptySync, removed: ["/somewhere/example"] };
+      },
     });
 
     expect(result.validation).toBe("registry");
     expect(result.pushed).toBe(true);
     expect(result.pushError).toBeNull();
-    expect(result.action).toBe("delete");
+    expect(result.syncResult?.removed).toEqual(["/somewhere/example"]);
     expect(await git(root, "log", "-1", "--pretty=%s")).toBe("chore(skills): 删除 example skill");
     expect(await git(root, "branch", "--format=%(refname:short)")).toBe("main");
     expect(await git(root, "status", "--porcelain")).toBe("");
     expect(await git(root, "rev-parse", "origin/main")).toBe(result.commit);
 
-    // apply and validate observe the pre-change revision; sync only runs once the
-    // commit exists, so a failure before it can never strand the machine's links.
-    const calls = await readLog(log);
-    expect(calls.map((entry) => entry.split(" | ")[0])).toEqual(["delete", "list", "sync"]);
-    expect(calls[0]).toContain(revision);
-    expect(calls[1]).toContain(revision);
-    expect(calls[2]).toContain(result.commit);
+    // Links are only reconciled once the commit exists, so a failure before it can never
+    // strand the machine.
+    expect(syncedAtCommit).toBe(result.commit);
+    expect(commands.calls).not.toContain("git switch");
+    expect(commands.calls.some((call) => call.startsWith("npm"))).toBe(false);
   });
 
   it("tolerates planned paths that no longer match anything, such as a removed submodule", async () => {
-    const { root, tsx } = await fixture();
-    const result = commitOnMain({
+    const { root, registry } = await fixture();
+    const result = await publish(new RecordingCommand(), {
       root,
-      tsx,
-      plan: { trackedChanges: ["registry/skills.yaml", "vendors/removed"] },
       title: "chore(skills): 删除 upstream source 及其 Skills",
-      applyArgs: ["src/cli.ts", "delete", "--source", "upstream", "--no-sync", "--json"],
-      syncArgs: ["src/cli.ts", "sync"],
       push: false,
+      apply: async ({ dryRun }) => {
+        if (!dryRun) await fs.appendFile(registry, "changed\n");
+        return removalPlan(["registry/skills.yaml", "vendors/removed"]);
+      },
+      sync: async () => emptySync,
     });
 
     expect(result.commit).toBeTruthy();
@@ -115,39 +134,136 @@ describe("commitOnMain", () => {
     expect(await git(root, "show", "--stat", "--pretty=", "HEAD")).toContain("registry/skills.yaml");
   });
 
-  it("restores a clean main and leaves links untouched when validation fails", async () => {
-    const { root, tsx, log, revision } = await fixture({ failValidation: true });
-    expect(() => commitOnMain({
-      root,
-      tsx,
-      plan: { trackedChanges: ["registry/skills.yaml"] },
-      title: "chore(skills): 删除 example skill",
-      applyArgs: ["src/cli.ts", "delete", "example", "--no-sync", "--json"],
-      syncArgs: ["src/cli.ts", "sync"],
-      push: true,
-    })).toThrow("restored to a clean main");
+  it("restores a clean main and never syncs when validation fails", async () => {
+    const { root, registry, revision } = await fixture();
+    // A runtime path forces the full check, which this fixture fails.
+    const commands = new RecordingCommand((command) =>
+      command === "npm" ? { status: 1, stdout: "", stderr: "check failed" } : null);
+    let synced = false;
 
+    await expect(publish(commands, {
+      root,
+      title: "chore(skills): 删除 example skill",
+      push: true,
+      apply: async ({ dryRun }) => {
+        if (!dryRun) await fs.appendFile(registry, "changed\n");
+        return removalPlan(["registry/skills.yaml", "src/core/manager.ts"]);
+      },
+      sync: async () => {
+        synced = true;
+        return emptySync;
+      },
+    })).rejects.toThrow("restored to a clean main");
+
+    expect(synced).toBe(false);
     expect(await git(root, "rev-parse", "HEAD")).toBe(revision);
     expect(await git(root, "status", "--porcelain")).toBe("");
-    expect((await readLog(log)).map((entry) => entry.split(" | ")[0])).toEqual(["delete", "list"]);
   });
 
   it("reports a rejected push as a warning rather than failing the change", async () => {
-    const { root, origin, tsx } = await fixture();
+    const { root, origin, registry } = await fixture();
     await fs.rm(origin, { recursive: true, force: true });
-    const result = commitOnMain({
+    const result = await publish(new RecordingCommand(), {
       root,
-      tsx,
-      plan: { trackedChanges: ["registry/skills.yaml"] },
       title: "chore(skills): 删除 example skill",
-      applyArgs: ["src/cli.ts", "delete", "example", "--no-sync", "--json"],
-      syncArgs: ["src/cli.ts", "sync"],
       push: true,
+      apply: async ({ dryRun }) => {
+        if (!dryRun) await fs.appendFile(registry, "changed\n");
+        return removalPlan(["registry/skills.yaml"]);
+      },
+      sync: async () => emptySync,
     });
 
     expect(result.commit).toBeTruthy();
     expect(result.pushed).toBe(false);
     expect(result.pushError).toBeTruthy();
-    expect(result.syncOutput).toContain("removed 1");
+  });
+
+  it("applies a link-only change without touching main", async () => {
+    const { root, revision } = await fixture();
+    let appliedWithSync = false;
+
+    const result = await publish(new RecordingCommand(), {
+      root,
+      title: "chore(skills): 移除 example 的 project 安装",
+      push: true,
+      apply: async ({ dryRun, sync }) => {
+        if (!dryRun && sync) appliedWithSync = true;
+        return removalPlan([]);
+      },
+      sync: async () => emptySync,
+    });
+
+    expect(appliedWithSync).toBe(true);
+    expect(result.commit).toBeNull();
+    expect(result.pushed).toBe(false);
+    expect(await git(root, "rev-parse", "HEAD")).toBe(revision);
+  });
+
+  it("prefers the central repository's own identity and falls back per field", async () => {
+    const { root, registry } = await fixture();
+    await git(root, "config", "--unset", "user.email");
+    const commands = new RecordingCommand((command, args) =>
+      command === "git" && args[0] === "config" ? { status: 1, stdout: "", stderr: "" } : null);
+    // The override above blanks every `git config` read, so a missing identity surfaces
+    // as a refusal rather than an anonymous commit.
+    await expect(publish(commands, {
+      root,
+      title: "chore(skills): 删除 example skill",
+      push: false,
+      apply: async () => removalPlan(["registry/skills.yaml"]),
+      sync: async () => emptySync,
+    })).rejects.toThrow("user.name and user.email are required");
+
+    // With only a local name and a global email, publishing still resolves both.
+    await git(root, "config", "--global", "--add", "user.email", "global@example.com");
+    try {
+      const result = await publish(new RecordingCommand(), {
+        root,
+        title: "chore(skills): 删除 example skill",
+        push: false,
+        apply: async ({ dryRun }) => {
+          if (!dryRun) await fs.appendFile(registry, "changed\n");
+          return removalPlan(["registry/skills.yaml"]);
+        },
+        sync: async () => emptySync,
+      });
+      expect(result.commit).toBeTruthy();
+      expect(await git(root, "log", "-1", "--pretty=%an <%ae>")).toBe("Fixture User <global@example.com>");
+    } finally {
+      await execFileAsync("git", ["config", "--global", "--unset-all", "user.email", "global@example.com"]);
+    }
+  });
+
+  it("refuses to publish from a dirty central repository", async () => {
+    const { root, registry } = await fixture();
+    await fs.appendFile(registry, "stray\n");
+    await expect(publish(new RecordingCommand(), {
+      root,
+      title: "chore(skills): 删除 example skill",
+      push: false,
+      apply: async () => removalPlan(["registry/skills.yaml"]),
+      sync: async () => emptySync,
+    })).rejects.toThrow("uncommitted changes");
+  });
+
+  it("refuses to commit a path the plan did not declare", async () => {
+    const { root, registry, revision } = await fixture();
+    await expect(publish(new RecordingCommand(), {
+      root,
+      title: "chore(skills): 删除 example skill",
+      push: false,
+      apply: async ({ dryRun }) => {
+        if (!dryRun) {
+          await fs.appendFile(registry, "changed\n");
+          await fs.writeFile(path.join(root, "unplanned.txt"), "surprise\n");
+          await git(root, "add", "unplanned.txt");
+        }
+        return removalPlan(["registry/skills.yaml"]);
+      },
+      sync: async () => emptySync,
+    })).rejects.toThrow("refusing to commit unexpected paths: unplanned.txt");
+
+    expect(await git(root, "rev-parse", "HEAD")).toBe(revision);
   });
 });

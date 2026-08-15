@@ -11,7 +11,7 @@ import { projectPaths } from "../src/core/paths.js";
 import { GitClient } from "../src/git/client.js";
 import { RegistryStore } from "../src/registry/store.js";
 import type { RegistryConfig } from "../src/core/types.js";
-import { changeCliArgs, changeMetadata, parseChangeArgs } from "../skills/manage-agent-skills/scripts/change-helpers.mjs";
+import { changeMetadata, changeOperands, parseChangeArgs } from "../skills/manage-agent-skills/scripts/change-helpers.mjs";
 
 const execFileAsync = promisify(execFile);
 const temporaryDirectories: string[] = [];
@@ -135,11 +135,11 @@ describe("enable and disable", () => {
 describe("change launcher actions", () => {
   it("maps update, enable, and disable onto CLI arguments and commit titles", () => {
     const update = parseChangeArgs(["--action", "update-source", "--source", "upstream"]);
-    expect(changeCliArgs(update, { dryRun: true })).toEqual(["src/cli.ts", "update", "upstream", "--dry-run", "--no-sync", "--json"]);
+    expect(changeOperands(update)).toEqual(["update", "upstream"]);
     expect(changeMetadata(update)).toEqual({ title: "chore(skills): 更新 upstream source" });
 
     const disable = parseChangeArgs(["--action", "disable", "--skill", "foo"]);
-    expect(changeCliArgs(disable, { sync: false })).toEqual(["src/cli.ts", "disable", "foo", "--no-sync", "--json"]);
+    expect(changeOperands(disable)).toEqual(["disable", "foo"]);
     expect(changeMetadata(disable)).toEqual({ title: "chore(skills): 停用 foo skill" });
     expect(changeMetadata(parseChangeArgs(["--action", "enable", "--skill", "foo"])))
       .toEqual({ title: "chore(skills): 启用 foo skill" });

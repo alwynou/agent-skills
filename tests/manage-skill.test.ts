@@ -4,54 +4,44 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
-import { resolveGitIdentity } from "../skills/manage-agent-skills/scripts/git-identity.mjs";
-import { changeCliArgs, changeMetadata, parseChangeArgs } from "../skills/manage-agent-skills/scripts/change-helpers.mjs";
-import { parseArgs, projectIdFromRemote, run } from "../skills/manage-agent-skills/scripts/install-helpers.mjs";
-import { touchesRuntime } from "../skills/manage-agent-skills/scripts/publish.mjs";
+import { changeMetadata, changeOperands, parseChangeArgs } from "../skills/manage-agent-skills/scripts/change-helpers.mjs";
+import { installOperands, parseArgs, projectIdFromRemote, run } from "../skills/manage-agent-skills/scripts/install-helpers.mjs";
+import { publishArgs } from "../skills/manage-agent-skills/scripts/bootstrap.mjs";
 
 const execFileAsync = promisify(execFile);
 
 describe("manage-agent-skills", () => {
-  it("uses central repository local identity with per-field global fallback", async () => {
-    const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "manage-agent-skills-identity-"));
-    const repository = path.join(temporaryRoot, "manager");
-    const home = path.join(temporaryRoot, "home");
-    await fs.mkdir(repository);
-    await fs.mkdir(home);
-    const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: path.join(home, ".config") };
-    try {
-      await execFileAsync("git", ["init", "--quiet", repository], { env });
-      await execFileAsync("git", ["-C", repository, "config", "--local", "user.name", "Repository User"], { env });
-      await execFileAsync("git", ["config", "--global", "user.name", "Global User"], { env });
-      await execFileAsync("git", ["config", "--global", "user.email", "global@example.com"], { env });
-      expect(resolveGitIdentity(repository, env)).toEqual({ name: "Repository User", email: "global@example.com" });
-    } finally {
-      await fs.rm(temporaryRoot, { recursive: true, force: true });
-    }
+  it("hands the install vocabulary to the manager as publish operands", () => {
+    const values = parseArgs([
+      "--skill", "review", "--source-url", "https://example.com/review", "--scope", "project", "--agent", "claude",
+    ]);
+    expect(installOperands(values, "/work/app")).toEqual([
+      "install", "review", "--scope", "project", "--agents", "claude", "--project", "app", "--project-path", "/work/app",
+    ]);
+
+    const global = parseArgs(["--skill", "review", "--source-url", "https://example.com/review", "--scope", "all-global"]);
+    expect(installOperands(global, "/work/app")).toEqual(["install", "review", "--scope", "global", "--agents", "*"]);
   });
 
-  it("uses the requested commit title and never branches or opens a pull request", async () => {
-    const script = await fs.readFile(path.resolve("skills/manage-agent-skills/scripts/install-skill.mjs"), "utf8");
-    expect(script).toContain('`feat(skills): 添加 ${values.get("--skill")} skill (${values.get("--source-url")})`');
-    expect(script).toContain('run("git", ["switch", "main"], root)');
-    expect(script).not.toContain('"switch", "-c"');
-    expect(script).not.toContain('"pr", "create"');
+  it("wraps operands in a titled publish invocation", () => {
+    expect(publishArgs("feat(skills): 添加 review skill (https://example.com/review)", ["install", "review"], false))
+      .toEqual(["src/cli.ts", "publish", "--title", "feat(skills): 添加 review skill (https://example.com/review)", "--", "install", "review"]);
+    expect(publishArgs("chore(skills): 删除 review skill", ["delete", "review"], true))
+      .toEqual(["src/cli.ts", "publish", "--title", "chore(skills): 删除 review skill", "--no-push", "--", "delete", "review"]);
   });
 
-  it("maps remove and delete requests to deterministic CLI and publication metadata", () => {
+  it("maps remove and delete requests onto manager operands and commit titles", () => {
     const projectRemove = parseChangeArgs([
       "--action", "remove", "--skill", "review", "--scope", "project", "--project", "storefront",
     ]);
-    expect(changeCliArgs(projectRemove, { dryRun: true })).toEqual([
-      "src/cli.ts", "remove", "review", "--scope", "project", "--project", "storefront", "--dry-run", "--no-sync", "--json",
-    ]);
-    expect(changeCliArgs(projectRemove, { sync: false })).toEqual([
-      "src/cli.ts", "remove", "review", "--scope", "project", "--project", "storefront", "--no-sync", "--json",
-    ]);
+    expect(changeOperands(projectRemove)).toEqual(["remove", "review", "--scope", "project", "--project", "storefront"]);
     expect(changeMetadata(projectRemove)).toEqual({ title: "chore(skills): 移除 review 的 project 安装" });
 
+    const agentRemove = parseChangeArgs(["--action", "remove", "--skill", "review", "--scope", "agent-global", "--agent", "claude"]);
+    expect(changeOperands(agentRemove)).toEqual(["remove", "review", "--scope", "global", "--agents", "claude"]);
+
     const sourceDelete = parseChangeArgs(["--action", "delete-source", "--source", "upstream"]);
-    expect(changeCliArgs(sourceDelete)).toEqual(["src/cli.ts", "delete", "--source", "upstream", "--json"]);
+    expect(changeOperands(sourceDelete)).toEqual(["delete", "--source", "upstream"]);
     expect(changeMetadata(sourceDelete)).toEqual({ title: "chore(skills): 删除 upstream source 及其 Skills" });
     expect(() => parseChangeArgs(["--action", "remove", "--skill", "review", "--scope", "agent-global"]))
       .toThrow("--agent is required");
@@ -59,34 +49,12 @@ describe("manage-agent-skills", () => {
       .toThrow("--skill is not allowed");
   });
 
-  it("commits removals and deletions straight onto main", async () => {
-    const script = await fs.readFile(path.resolve("skills/manage-agent-skills/scripts/change-skill.mjs"), "utf8");
-    expect(script).toContain("commitOnMain(");
-    expect(script).toContain("plan.noOp ? plan");
-    expect(script).not.toContain('"switch", "-c"');
-    expect(script).not.toContain('"pr", "create"');
-  });
-
-  it("commits before reconciling links and restores main when publication fails", async () => {
-    const script = await fs.readFile(path.resolve("skills/manage-agent-skills/scripts/publish.mjs"), "utf8");
-    expect(script).toContain("resolveGitIdentity(root)");
-    expect(script).toContain('"add", "-A", "--", target');
-    expect(script).toContain('details.includes("did not match any files")');
-    expect(script.indexOf("commit\", \"-m\", title")).toBeLessThan(script.indexOf("run(tsx, syncArgs"));
-    expect(script).toContain('"restore", "--source", revision, "--staged", "--worktree", "--", target');
-  });
-
-  it("scopes validation to the paths a change actually touches", () => {
-    expect(touchesRuntime(["registry/skills.yaml", ".skill-manager/lock.yaml", "vendors/upstream", ".gitmodules"])).toBe(false);
-    expect(touchesRuntime(["registry/skills.yaml", "src/core/manager.ts"])).toBe(true);
-    expect(touchesRuntime(["skills/manage-agent-skills/SKILL.md"])).toBe(true);
-    expect(touchesRuntime(["package-lock.json"])).toBe(true);
-  });
-
-  it("accepts --no-push as a flag in both launchers", () => {
-    const required = ["--skill", "foo", "--source-url", "https://example.com/foo", "--scope", "all-global"];
-    expect(parseArgs([...required, "--no-push"]).has("--no-push")).toBe(true);
-    expect(parseChangeArgs(["--action", "delete", "--skill", "review", "--no-push"]).has("--no-push")).toBe(true);
+  it("keeps the launchers free of branch and pull-request machinery", async () => {
+    for (const name of ["install-skill.mjs", "change-skill.mjs", "bootstrap.mjs"]) {
+      const script = await fs.readFile(path.resolve("skills/manage-agent-skills/scripts", name), "utf8");
+      expect(script, name).not.toContain('"switch", "-c"');
+      expect(script, name).not.toContain('"pr", "create"');
+    }
   });
 
   it("changes to the central repository before launching Node and preserves the working directory", async () => {

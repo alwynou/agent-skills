@@ -8,7 +8,10 @@ import { GitClient } from "./git/client.js";
 import { RegistryStore } from "./registry/store.js";
 import { errorMessage, UserError } from "./core/errors.js";
 import { formatSkillDetail } from "./core/skill-detail.js";
-import { agentIds, type AgentId, type DeleteSkillRequest, type InstallSkillRequest, type RemoveSkillRequest } from "./core/types.js";
+import { parseOptions, rejectUnknown, requireOperand } from "./command/args.js";
+import { applyMutation, formatMutation, isMutatingCommand, mutationFlags, type MutatingCommand } from "./command/mutations.js";
+import { publish } from "./publish/publisher.js";
+import { NodeCommand } from "./publish/process.js";
 
 const help = `agent-skills — declarative Agent Skill manager
 
@@ -27,6 +30,7 @@ Usage:
   agent-skills [--root <path>] remove <skill> --all [--dry-run] [--json] [--no-sync]
   agent-skills [--root <path>] delete <skill> [--dry-run] [--json] [--no-sync]
   agent-skills [--root <path>] delete --source <id> [--dry-run] [--json] [--no-sync]
+  agent-skills [--root <path>] publish --title <commit-title> [--no-push] -- <mutating command> [args...]
   agent-skills [--root <path>] doctor
   agent-skills [--root <path>] check [source]
   agent-skills [--root <path>] diff <source>
@@ -68,39 +72,10 @@ function parseArguments(argv: string[]): { root: string; command: string; operan
   return { root: explicitRoot ? path.resolve(explicitRoot) : findRoot(process.cwd()), command, operands: args.slice(1) };
 }
 
-function requireOperand(command: string, operands: string[], index = 0): string {
-  const operand = operands[index];
-  if (!operand) throw new UserError(`${command} requires ${index === 0 ? "a name" : "another argument"}`);
-  return operand;
-}
-
-function parseOptions(args: string[], booleanNames: string[] = []): { values: Map<string, string>; flags: Set<string> } {
-  const values = new Map<string, string>();
-  const flags = new Set<string>();
-  const booleans = new Set(booleanNames);
-  for (let index = 0; index < args.length; index += 1) {
-    const name = args[index];
-    if (!name?.startsWith("--")) throw new UserError(`unexpected argument ${name}`);
-    if (booleans.has(name)) {
-      flags.add(name);
-      continue;
-    }
-    const value = args[index + 1];
-    if (!value || value.startsWith("--")) throw new UserError(`${name} requires a value`);
-    if (values.has(name)) throw new UserError(`${name} may only be specified once`);
-    values.set(name, value);
-    index += 1;
-  }
-  return { values, flags };
-}
-
-function parseAgents(value: string | undefined, command = "install"): Array<AgentId | "*"> {
-  if (!value) throw new UserError(`${command} requires --agents`);
-  const agents = value.split(",").filter(Boolean);
-  if (agents.length === 0 || agents.some((agent) => agent !== "*" && !agentIds.includes(agent as AgentId))) {
-    throw new UserError(`unsupported agents ${value}`);
-  }
-  return agents as Array<AgentId | "*">;
+async function runMutation(manager: SkillManager, command: MutatingCommand, operands: string[]): Promise<void> {
+  const { options, json } = mutationFlags(command, operands);
+  const plan = await applyMutation(manager, command, operands, options);
+  console.log(json ? JSON.stringify(plan, null, 2) : formatMutation(command, plan));
 }
 
 async function main(): Promise<void> {
@@ -158,66 +133,10 @@ async function main(): Promise<void> {
       for (const skipped of result.skipped) console.warn(`warning: skipped ${skipped}`);
       return;
     }
-    case "install": {
-      const skillName = requireOperand(command, operands);
-      const options = parseOptions(operands.slice(1), ["--dry-run", "--json", "--no-sync"]);
-      const allowed = new Set(["--scope", "--agents", "--repo", "--source-id", "--path", "--ref", "--project", "--project-path"]);
-      for (const name of options.values.keys()) if (!allowed.has(name)) throw new UserError(`unknown install option ${name}`);
-      const scope = options.values.get("--scope");
-      if (scope !== "global" && scope !== "project") throw new UserError("install requires --scope global or project");
-      const request: InstallSkillRequest = {
-        skillName,
-        scope,
-        agents: scope === "project" && !options.values.has("--agents") ? ["*"] : parseAgents(options.values.get("--agents")),
-        ...(options.values.get("--repo") ? { repo: options.values.get("--repo") as string } : {}),
-        ...(options.values.get("--source-id") ? { sourceId: options.values.get("--source-id") as string } : {}),
-        ...(options.values.get("--path") ? { skillPath: options.values.get("--path") as string } : {}),
-        ...(options.values.get("--ref") ? { ref: options.values.get("--ref") as string } : {}),
-        ...(options.values.get("--project") ? { projectId: options.values.get("--project") as string } : {}),
-        ...(options.values.get("--project-path") ? { projectPath: options.values.get("--project-path") as string } : {}),
-        dryRun: options.flags.has("--dry-run"),
-        sync: !options.flags.has("--no-sync"),
-      };
-      const plan = await manager.install(request);
-      if (options.flags.has("--json")) console.log(JSON.stringify(plan, null, 2));
-      else console.log(`${plan.skill}: ${plan.applied ? "installed" : "planned"} ${plan.target.scope} target (${plan.links.length} link(s))`);
-      return;
-    }
-    case "remove": {
-      const skillName = requireOperand(command, operands);
-      const options = parseOptions(operands.slice(1), ["--all", "--dry-run", "--json", "--no-sync"]);
-      const allowed = new Set(["--scope", "--agents", "--project"]);
-      for (const name of options.values.keys()) if (!allowed.has(name)) throw new UserError(`unknown remove option ${name}`);
-      const scope = options.values.get("--scope");
-      if (scope !== undefined && scope !== "global" && scope !== "project") throw new UserError("remove --scope must be global or project");
-      const request: RemoveSkillRequest = {
-        skillName,
-        ...(scope ? { scope } : {}),
-        ...(options.values.has("--agents") ? { agents: parseAgents(options.values.get("--agents"), "remove") } : {}),
-        ...(options.values.has("--project") ? { projectId: options.values.get("--project") as string } : {}),
-        all: options.flags.has("--all"),
-        dryRun: options.flags.has("--dry-run"),
-        sync: !options.flags.has("--no-sync"),
-      };
-      const plan = await manager.remove(request);
-      if (options.flags.has("--json")) console.log(JSON.stringify(plan, null, 2));
-      else console.log(plan.noOp ? `${skillName}: no matching target` : `${skillName}: ${plan.applied ? "removed" : "planned"}`);
-      return;
-    }
+    case "install":
+    case "remove":
     case "delete": {
-      const first = operands[0];
-      const hasSkillName = Boolean(first && !first.startsWith("--"));
-      const options = parseOptions(operands.slice(hasSkillName ? 1 : 0), ["--dry-run", "--json", "--no-sync"]);
-      for (const name of options.values.keys()) if (name !== "--source") throw new UserError(`unknown delete option ${name}`);
-      const request: DeleteSkillRequest = {
-        ...(hasSkillName ? { skillName: first as string } : {}),
-        ...(options.values.has("--source") ? { sourceId: options.values.get("--source") as string } : {}),
-        dryRun: options.flags.has("--dry-run"),
-        sync: !options.flags.has("--no-sync"),
-      };
-      const plan = await manager.delete(request);
-      if (options.flags.has("--json")) console.log(JSON.stringify(plan, null, 2));
-      else console.log(`${plan.skills.join(",") || plan.sourceId}: ${plan.applied ? "deleted" : "planned"}`);
+      await runMutation(manager, command, operands);
       return;
     }
     case "doctor": {
@@ -241,33 +160,32 @@ async function main(): Promise<void> {
     case "diff":
       console.log((await manager.diff(requireOperand(command, operands))) || "No relevant changes.");
       return;
-    case "update": {
-      const sourceId = requireOperand(command, operands);
-      const options = parseOptions(operands.slice(1), ["--dry-run", "--json", "--no-sync"]);
-      for (const name of options.values.keys()) throw new UserError(`unknown update option ${name}`);
-      const plan = await manager.update({
-        sourceId,
-        dryRun: options.flags.has("--dry-run"),
-        sync: !options.flags.has("--no-sync"),
-      });
-      if (options.flags.has("--json")) console.log(JSON.stringify(plan, null, 2));
-      else if (plan.noOp) console.log(`${plan.source}: already at ${plan.candidate.slice(0, 8)}`);
-      else console.log(`${plan.source}: ${plan.applied ? "updated" : "planned"} ${plan.current?.slice(0, 8)} → ${plan.candidate.slice(0, 8)}`);
-      return;
-    }
+    case "update":
     case "enable":
     case "disable": {
-      const skillName = requireOperand(command, operands);
-      const options = parseOptions(operands.slice(1), ["--dry-run", "--json", "--no-sync"]);
-      for (const name of options.values.keys()) throw new UserError(`unknown ${command} option ${name}`);
-      const plan = await manager.setEnabled({
-        skillName,
-        enabled: command === "enable",
-        dryRun: options.flags.has("--dry-run"),
-        sync: !options.flags.has("--no-sync"),
+      await runMutation(manager, command, operands);
+      return;
+    }
+    case "publish": {
+      const separator = operands.indexOf("--");
+      if (separator < 0) throw new UserError("publish requires -- followed by the command to publish");
+      const { values, flags } = parseOptions(operands.slice(0, separator), ["--no-push"]);
+      rejectUnknown(command, values, ["--title"]);
+      const title = values.get("--title");
+      if (!title) throw new UserError("publish requires --title");
+      const [inner, ...innerOperands] = operands.slice(separator + 1);
+      if (!inner || !isMutatingCommand(inner)) throw new UserError(`publish cannot run ${inner ?? "<end>"}`);
+      const result = await publish(new NodeCommand(), {
+        root,
+        title,
+        push: !flags.has("--no-push"),
+        apply: (options) => applyMutation(manager, inner, innerOperands, options),
+        // Installing reconciles just that Skill; a removal has to sweep the whole
+        // manifest because the Skill is already gone from the registry.
+        sync: () => manager.sync(inner === "install" ? innerOperands[0] : undefined),
       });
-      if (options.flags.has("--json")) console.log(JSON.stringify(plan, null, 2));
-      else console.log(plan.noOp ? `${skillName}: already ${command}d` : `${skillName}: ${plan.applied ? `${command}d` : `planned ${command}`}`);
+      console.log(JSON.stringify(result, null, 2));
+      if (result.pushError) console.warn(`warning: committed on main but not pushed: ${result.pushError}`);
       return;
     }
     case "project": {

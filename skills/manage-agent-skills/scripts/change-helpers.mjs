@@ -48,34 +48,21 @@ export function parseChangeArgs(argv) {
   return values;
 }
 
-export function changeCliArgs(values, { dryRun = false, sync = true } = {}) {
+/** Translates this Skill's vocabulary into the manager's own command operands. */
+export function changeOperands(values) {
   const action = values.get("--action");
-  let args;
   if (action === "remove") {
-    args = ["src/cli.ts", "remove", values.get("--skill")];
+    const operands = ["remove", values.get("--skill")];
     const scope = values.get("--scope");
-    if (scope === "all") args.push("--all");
-    else if (scope === "project") args.push("--scope", "project", "--project", values.get("--project"));
-    else args.push("--scope", "global", "--agents", scope === "agent-global" ? values.get("--agent") : "*");
-  } else if (action === "delete") {
-    args = ["src/cli.ts", "delete", values.get("--skill")];
-  } else if (action === "enable" || action === "disable") {
-    args = ["src/cli.ts", action, values.get("--skill")];
-  } else if (action === "update-source") {
-    args = ["src/cli.ts", "update", values.get("--source")];
-  } else {
-    args = ["src/cli.ts", "delete", "--source", values.get("--source")];
+    if (scope === "all") operands.push("--all");
+    else if (scope === "project") operands.push("--scope", "project", "--project", values.get("--project"));
+    else operands.push("--scope", "global", "--agents", scope === "agent-global" ? values.get("--agent") : "*");
+    return operands;
   }
-  if (dryRun) args.push("--dry-run");
-  if (dryRun || !sync) args.push("--no-sync");
-  args.push("--json");
-  return args;
-}
-
-// Removals drop the skill from the registry, so a name-scoped sync would no longer
-// resolve it. A full sync reconciles the orphaned links recorded in managed-links.json.
-export function changeSyncArgs() {
-  return ["src/cli.ts", "sync"];
+  if (action === "delete") return ["delete", values.get("--skill")];
+  if (action === "enable" || action === "disable") return [action, values.get("--skill")];
+  if (action === "update-source") return ["update", values.get("--source")];
+  return ["delete", "--source", values.get("--source")];
 }
 
 export function changeMetadata(values) {

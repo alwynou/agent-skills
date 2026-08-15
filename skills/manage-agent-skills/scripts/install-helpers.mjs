@@ -76,3 +76,20 @@ export function inferProjectId(cwd) {
   }
   return slug(path.basename(cwd));
 }
+
+/** Translates this Skill's vocabulary into the manager's `install` operands. */
+export function installOperands(values, cwd) {
+  const scope = values.get("--scope");
+  const operands = ["install", values.get("--skill")];
+  operands.push("--scope", scope === "project" ? "project" : "global");
+  // `--agent` narrows either an agent-global install or a project install to one agent.
+  operands.push("--agents", values.get("--agent") ?? "*");
+  for (const name of ["--repo", "--source-id", "--path", "--ref"]) {
+    if (values.has(name)) operands.push(name, values.get(name));
+  }
+  if (scope === "project") {
+    operands.push("--project", values.get("--project") ?? inferProjectId(cwd));
+    operands.push("--project-path", cwd);
+  }
+  return operands;
+}
