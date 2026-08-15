@@ -79,7 +79,7 @@ Both launchers accept `--no-push` to keep the commit local.
 
 The central repository holds your own configuration, not shared code awaiting review, so `main` is the only branch that ever represents it: the launchers commit straight to `main` and never open a branch or a pull request.
 
-Each run applies changes in one order — registry, lock, and vendor edits first, validation, the commit, and only then symlink reconciliation. A failure before the commit has not touched a single link and restores a clean `main`, so a failed run needs no Git surgery. Validation is scoped to what changed: a registry-only edit proves the registry still resolves, while edits under the manager's own source run the full check and build. After committing, the launcher pushes `main` unless `--no-push` was passed; a rejected push is a warning, not a failure, because the commit and the links already agree locally.
+Each run applies changes in one order — registry, lock, and vendor edits first, validation, the commit, and only then symlink reconciliation. A failure before the commit has not touched a single link and restores a clean `main`, so a failed run needs no Git surgery. Validation is scoped to what changed: a registry-only edit proves the registry still resolves, while edits under the manager's own source run the full check. After committing, the launcher pushes `main` unless `--no-push` was passed; a rejected push is a warning, not a failure, because the commit and the links already agree locally.
 
 ## Global vs project scope
 

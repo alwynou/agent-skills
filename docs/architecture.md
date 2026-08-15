@@ -41,7 +41,7 @@ Ignored content is weighed by what deleting it would cost. Inside a local Skill 
 
 The central repository holds the user's own configuration rather than reviewable shared code, so `main` is the only branch that ever represents it. The bundled `manage-agent-skills` launchers commit straight to `main` and never open a pull request; routing configuration through review would leave the machine's links and the committed registry disagreeing for as long as the review lasted.
 
-Two kinds of state must therefore be ordered, not merely both applied. Registry, lock, and vendor edits are committed first; symlinks are reconciled only afterwards. A failure before the commit leaves the machine untouched and restores a clean `main`, which is the only ordering under which a failed run is recoverable without manual Git surgery. Validation is scoped to what changed, because a registry edit cannot break a build.
+Two kinds of state must therefore be ordered, not merely both applied. Registry, lock, and vendor edits are committed first; symlinks are reconciled only afterwards. A failure before the commit leaves the machine untouched and restores a clean `main`, which is the only ordering under which a failed run is recoverable without manual Git surgery. Validation is scoped to what changed, because a registry edit cannot break a build. The full path runs `npm run check`; emitting `dist/` on top of that proves nothing the type check has not, so it is not part of publishing.
 
 The generic CLI entry point is not a publishing path. It refuses every subcommand that writes committed state and names the launcher that owns it; without that boundary a bare `update` or `enable` would leave tracked files dirty and deadlock every later launcher run.
 

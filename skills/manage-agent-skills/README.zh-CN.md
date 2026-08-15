@@ -79,7 +79,7 @@ skills/manage-agent-skills/scripts/change-skill.sh --action enable --skill revie
 
 中央仓库存放的是你自己的配置，而不是等待 review 的共享代码，所以 `main` 是唯一代表它的分支：启动器直接 commit 到 `main`，从不开分支、不建 pull request。
 
-每次运行都按同一个顺序应用变更——先改 registry、lock 和 vendor，然后校验，然后 commit，最后才 reconcile symlink。在 commit 之前失败时，机器上的链接一根都没动过，仓库也会恢复到干净的 `main`，因此失败的运行不需要任何 Git 手术。校验按改动范围分级：只改 registry 时只需证明 registry 仍能解析，而改动 manager 自身源码时会跑完整的 check 和 build。commit 之后启动器会推送 `main`，除非传了 `--no-push`；推送被拒只报警告而非失败，因为本地 commit 与链接已经一致。
+每次运行都按同一个顺序应用变更——先改 registry、lock 和 vendor，然后校验，然后 commit，最后才 reconcile symlink。在 commit 之前失败时，机器上的链接一根都没动过，仓库也会恢复到干净的 `main`，因此失败的运行不需要任何 Git 手术。校验按改动范围分级：只改 registry 时只需证明 registry 仍能解析，而改动 manager 自身源码时会跑完整的 check。commit 之后启动器会推送 `main`，除非传了 `--no-push`；推送被拒只报警告而非失败，因为本地 commit 与链接已经一致。
 
 ## 全局与项目级 scope
 

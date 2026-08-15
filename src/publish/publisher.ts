@@ -40,10 +40,10 @@ async function git(commands: CommandPort, root: string, args: string[]): Promise
 
 async function validate(commands: CommandPort, root: string, trackedChanges: readonly string[]): Promise<Validation> {
   if (!touchesRuntime(trackedChanges)) return "registry";
-  for (const script of ["check", "build"]) {
-    const result = await commands.run("npm", ["run", script], root);
-    if (result.status !== 0) throw new UserError(`npm run ${script} failed: ${result.stderr || result.stdout}`);
-  }
+  // `npm run check` already typechecks with the same compiler and config; emitting to
+  // `dist/` on top of that proves nothing the type check has not already proven.
+  const result = await commands.run("npm", ["run", "check"], root);
+  if (result.status !== 0) throw new UserError(`npm run check failed: ${result.stderr || result.stdout}`);
   return "full";
 }
 

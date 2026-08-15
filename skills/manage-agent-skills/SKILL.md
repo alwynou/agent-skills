@@ -156,7 +156,7 @@ Run `<skill-real-path>/scripts/change-skill.sh --action disable --skill <skill-n
 
 The central repository holds the user’s own Skill configuration, so `main` is the only branch that ever represents it. Both launchers commit straight to `main`; they never create a branch or a pull request.
 
-Each publishing run applies the registry, lock, and vendor edits first, validates them, commits them on `main`, and only then reconciles the symlinks. A failure before the commit therefore leaves the machine’s links untouched and restores the central repository to a clean `main`. Validation is scoped to what changed: registry-only edits just prove the registry still resolves, while edits under `src`, `bin`, `tests`, `skills/manage-agent-skills`, or the build configuration run the full check and build.
+Each publishing run applies the registry, lock, and vendor edits first, validates them, commits them on `main`, and only then reconciles the symlinks. A failure before the commit therefore leaves the machine’s links untouched and restores the central repository to a clean `main`. Validation is scoped to what changed: registry-only edits just prove the registry still resolves, while edits under `src`, `bin`, `tests`, `skills/manage-agent-skills`, or the build configuration run the full check.
 
 After committing, the launcher pushes `main` unless `--no-push` was passed. A rejected push is reported as a warning rather than a failure, because the commit and the links already agree locally; rerun the push after reconciling with `origin`.
 
