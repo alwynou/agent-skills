@@ -2,9 +2,6 @@ sources:
   herdr:
     type: git
     repo: https://github.com/herdrdev/herdr.git
-  mattpocock:
-    type: git
-    repo: https://github.com/mattpocock/skills.git
 projects:
   - cfpamf-front-storehouse-manage-front
 skills:
@@ -19,30 +16,6 @@ skills:
   herdr:
     source: herdr
     path: skills/herdr
-    enabled: true
-    targets:
-      - scope: global
-        agents:
-          - codex
-          - claude
-          - kimi-code
-          - pi-agent
-          - opencode
-  grill-me:
-    source: mattpocock
-    path: skills/productivity/grill-me
-    enabled: true
-    targets:
-      - scope: global
-        agents:
-          - codex
-          - claude
-          - kimi-code
-          - pi-agent
-          - opencode
-  grilling:
-    source: mattpocock
-    path: skills/productivity/grilling
     enabled: true
     targets:
       - scope: global
