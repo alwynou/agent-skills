@@ -151,6 +151,8 @@ export interface SkillRemovalPlan {
   trackedChanges: string[];
   links: string[];
   retainedSource: boolean;
+  /** Ignored content removed along with the Skill or vendor, such as build output. */
+  ignoredPaths: string[];
   noOp: boolean;
   applied: boolean;
   syncResult: {

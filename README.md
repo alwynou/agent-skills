@@ -193,7 +193,7 @@ agent-skills install example \
   --project-path /absolute/path/to/app
 ```
 
-The bundled `manage-agent-skills` Skill discovers sources, asks for confirmation before pulling name-only matches, invokes this interface, and publishes tracked install, remove, or delete changes from a feature branch as a Draft PR.
+The bundled `manage-agent-skills` Skill discovers sources, asks for confirmation before pulling name-only matches, invokes this interface, and commits tracked install, remove, or delete changes straight onto `main` before reconciling the symlinks. Pass `--no-push` to keep the commit local.
 
 ## Installation destinations
 

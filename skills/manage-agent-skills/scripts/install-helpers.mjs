@@ -28,8 +28,13 @@ export function parseArgs(argv) {
   for (let index = 0; index < argv.length;) {
     const name = argv[index];
     if (!name?.startsWith("--")) fail(`unexpected positional argument ${name ?? "<end>"}`);
-    if (!allowed.has(name)) fail(`unknown argument ${name}`);
     if (values.has(name)) fail(`duplicate argument ${name}`);
+    if (name === "--no-push") {
+      values.set(name, "true");
+      index += 1;
+      continue;
+    }
+    if (!allowed.has(name)) fail(`unknown argument ${name}`);
     const value = argv[index + 1];
     if (!value || value.startsWith("--")) fail(`${name} requires a value`);
     values.set(name, value);

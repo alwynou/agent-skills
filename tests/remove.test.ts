@@ -71,6 +71,7 @@ async function gitSourceFixture(shared: boolean) {
   const home = path.join(temporaryRoot, "home");
   await fs.mkdir(source);
   await git(source, "init", "--quiet");
+  await fs.writeFile(path.join(source, ".gitignore"), "node_modules/\n");
   for (const name of ["one", "two"]) {
     await fs.mkdir(path.join(source, "skills", name), { recursive: true });
     await fs.writeFile(path.join(source, "skills", name, "SKILL.md"), `---\nname: ${name}\ndescription: test\n---\n`);
@@ -189,9 +190,40 @@ describe("skill removal", () => {
     const { root, store, manager } = await localFixture();
     await fs.writeFile(path.join(root, ".gitignore"), "skills/example/private.txt\n");
     await fs.writeFile(path.join(root, "skills", "example", "private.txt"), "mine");
-    await expect(manager.delete({ skillName: "example", dryRun: false, sync: true })).rejects.toThrow("modified or untracked");
+    await expect(manager.delete({ skillName: "example", dryRun: false, sync: true }))
+      .rejects.toThrow("ignored content that deletion would destroy: skills/example/private.txt");
     expect((await store.readRegistry()).skills.example).toBeDefined();
     expect(await fs.readFile(path.join(root, "skills", "example", "private.txt"), "utf8")).toBe("mine");
+  });
+
+  it("deletes a vendor holding ignored build output and reports what went with it", async () => {
+    const { root, store, manager } = await gitSourceFixture(false);
+    await manager.sync();
+    await fs.mkdir(path.join(root, "vendors", "upstream", "node_modules"), { recursive: true });
+    await fs.writeFile(path.join(root, "vendors", "upstream", "node_modules", "index.js"), "built");
+
+    const result = await manager.delete({ sourceId: "upstream", dryRun: false, sync: true });
+
+    expect(result.ignoredPaths).toEqual(["node_modules/"]);
+    expect((await store.readRegistry()).sources.upstream).toBeUndefined();
+    await expect(fs.stat(path.join(root, "vendors", "upstream"))).rejects.toThrow();
+  });
+
+  it("does not mistake the central repository's own state for an uninitialized vendor's", async () => {
+    const { root, store, manager } = await gitSourceFixture(false);
+    await manager.sync();
+    // A deinitialized submodule has no `.git`, so an unguarded `git -C` inside it reports
+    // the central repository instead — whose ignored node_modules would look like a dirty
+    // vendor and refuse every deletion.
+    await git(root, "submodule", "deinit", "--force", "vendors/upstream");
+    await fs.writeFile(path.join(root, ".gitignore"), "node_modules/\n");
+    await fs.mkdir(path.join(root, "node_modules"), { recursive: true });
+    await fs.writeFile(path.join(root, "node_modules", "index.js"), "dependency");
+
+    const result = await manager.delete({ sourceId: "upstream", dryRun: false, sync: true });
+
+    expect(result.ignoredPaths).toEqual([]);
+    expect((await store.readRegistry()).sources.upstream).toBeUndefined();
   });
 
   it("deletes one shared third-party Skill while retaining its source", async () => {
@@ -232,7 +264,8 @@ describe("skill removal", () => {
     const { root, home, store, manager } = await gitSourceFixture(false);
     await manager.sync();
     await fs.writeFile(path.join(root, "vendors", "upstream", "skills", "one", "SKILL.md"), "dirty");
-    await expect(manager.delete({ sourceId: "upstream", dryRun: false, sync: true })).rejects.toThrow("vendor is dirty");
+    await expect(manager.delete({ sourceId: "upstream", dryRun: false, sync: true }))
+      .rejects.toThrow("vendor has modified or untracked content: skills/one/SKILL.md");
     expect((await store.readRegistry()).skills.one).toBeDefined();
     expect(await fs.realpath(path.join(home, ".agents", "skills", "one"))).toBeTruthy();
   });

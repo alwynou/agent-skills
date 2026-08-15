@@ -6,8 +6,13 @@ export function parseChangeArgs(argv) {
   for (let index = 0; index < argv.length;) {
     const name = argv[index];
     if (!name?.startsWith("--")) fail(`unexpected positional argument ${name ?? "<end>"}`);
-    if (!allowed.has(name)) fail(`unknown argument ${name}`);
     if (values.has(name)) fail(`duplicate argument ${name}`);
+    if (name === "--no-push") {
+      values.set(name, "true");
+      index += 1;
+      continue;
+    }
+    if (!allowed.has(name)) fail(`unknown argument ${name}`);
     const value = argv[index + 1];
     if (!value || value.startsWith("--")) fail(`${name} requires a value`);
     values.set(name, value);
@@ -43,7 +48,7 @@ export function parseChangeArgs(argv) {
   return values;
 }
 
-export function changeCliArgs(values, dryRun) {
+export function changeCliArgs(values, { dryRun = false, sync = true } = {}) {
   const action = values.get("--action");
   let args;
   if (action === "remove") {
@@ -57,9 +62,16 @@ export function changeCliArgs(values, dryRun) {
   } else {
     args = ["src/cli.ts", "delete", "--source", values.get("--source")];
   }
-  if (dryRun) args.push("--dry-run", "--no-sync");
+  if (dryRun) args.push("--dry-run");
+  if (dryRun || !sync) args.push("--no-sync");
   args.push("--json");
   return args;
+}
+
+// Removals drop the skill from the registry, so a name-scoped sync would no longer
+// resolve it. A full sync reconciles the orphaned links recorded in managed-links.json.
+export function changeSyncArgs() {
+  return ["src/cli.ts", "sync"];
 }
 
 export function changeMetadata(values) {
@@ -67,18 +79,10 @@ export function changeMetadata(values) {
   if (action === "remove") {
     const skill = values.get("--skill");
     const scope = values.get("--scope");
-    return {
-      branch: `skills/remove-${skill}-${scope}`,
-      title: `chore(skills): 移除 ${skill} 的 ${scope} 安装`,
-    };
+    return { title: `chore(skills): 移除 ${skill} 的 ${scope} 安装` };
   }
   if (action === "delete") {
-    const skill = values.get("--skill");
-    return { branch: `skills/delete-${skill}`, title: `chore(skills): 删除 ${skill} skill` };
+    return { title: `chore(skills): 删除 ${values.get("--skill")} skill` };
   }
-  const source = values.get("--source");
-  return {
-    branch: `skills/delete-source-${source}`,
-    title: `chore(skills): 删除 ${source} source 及其 Skills`,
-  };
+  return { title: `chore(skills): 删除 ${values.get("--source")} source 及其 Skills` };
 }

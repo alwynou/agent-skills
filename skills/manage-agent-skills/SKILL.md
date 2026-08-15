@@ -50,7 +50,7 @@ Use the confirmed tree/path URL as `--source-url`; use the cloneable repository 
 - For a new repository, prefer its lowercase repository name. If occupied by another URL, use `owner-repo`; stop if that also conflicts.
 - For project scope, derive normalized `owner-repo` from the current Git remote on GitHub or another Git host. For nested groups, use the final group and repository. Fall back to the lowercase directory name only when the remote cannot be parsed. If the ID is bound elsewhere, ask for a different logical ID.
 
-## Install and publish
+## Install
 
 Run the shell launcher from the user’s working directory. It records that directory, changes to the central `agent-skills` repository, and selects an installed Node.js 20+ runtime there. Set `AGENT_SKILLS_NODE` to an explicit compatible executable when automatic discovery cannot find one:
 
@@ -61,7 +61,8 @@ Run the shell launcher from the user’s working directory. It records that dire
   --scope <project|agent-global|all-global> \
   [--agent <current-agent>] \
   [--repo <clone-url> --source-id <source-id> --path <skill-path> --ref <ref>] \
-  [--project <logical-project-id>]
+  [--project <logical-project-id>] \
+  [--no-push]
 ```
 
 Choose source flags from registry state:
@@ -70,7 +71,7 @@ Choose source flags from registry state:
 - New Skill in an existing source: pass `--source-id` and `--path`; omit `--repo` and `--ref`.
 - New source: pass `--repo`, `--source-id`, and `--path`; pass `--ref` only when pinning a non-default ref.
 
-Do not invoke `install-skill.mjs` directly from the business project. Pass `--agent` only for `agent-global`; project scope creates `.agents/skills/<name>` plus `.claude/skills/<name>` compatibility links. The script refuses a dirty central repository, updates it to `origin/main`, reloads the updated installer when necessary, then performs the installation dry run. It branches from that main revision, applies a selective sync, validates the manager, reads the commit identity from the central repository’s Git configuration with global fallback, pushes, and opens a Draft PR.
+Do not invoke `install-skill.mjs` directly from the business project. Pass `--agent` only for `agent-global`; project scope creates `.agents/skills/<name>` plus `.claude/skills/<name>` compatibility links. The script refuses a dirty central repository, updates it to `origin/main`, reloads the updated installer when necessary, then performs the installation dry run.
 
 The commit title must be exactly:
 
@@ -78,9 +79,9 @@ The commit title must be exactly:
 feat(skills): 添加 <skill-name> skill (<source-url>)
 ```
 
-If only local binding or links change, expect no branch, commit, or PR. Report the installed scope, created links, locked commit, branch, commit, and Draft PR URL when present.
+If only local binding or links change, expect no commit. Report the installed scope, created links, locked commit, and commit hash.
 
-## Remove or delete and publish
+## Remove or delete
 
 Run the change launcher from the user’s working directory. It changes to the central repository before selecting Node.js and running the manager:
 
@@ -100,7 +101,11 @@ Run the change launcher from the user’s working directory. It changes to the c
 <skill-real-path>/scripts/change-skill.sh --action delete-source --source <source-id>
 ```
 
-Removing the final target leaves the Skill disabled and available for a later reinstall. Deleting a local Skill removes its clean, tracked `skills/<name>` directory. Deleting the only Skill from a third-party source removes the source too; when other registered Skills share that source, the source, lock, and vendor remain. Whole-source deletion is explicit and atomic. Unknown, modified, untracked, shared local, or out-of-tree content causes a safe refusal.
+Every form accepts `--no-push` to keep the commit local.
+
+Removing the final target leaves the Skill disabled and available for a later reinstall. Deleting a local Skill removes its clean, tracked `skills/<name>` directory. Deleting the only Skill from a third-party source removes the source too; when other registered Skills share that source, the source, lock, and vendor remain. Whole-source deletion is explicit and atomic. Unknown, shared local, or out-of-tree content causes a safe refusal.
+
+Modified or untracked content always refuses. Ignored content is weighed by location: inside a local Skill it may be the user’s own data and refuses, while inside a vendor it is build output of a re-clonable upstream checkout, so deletion proceeds and reports it as `ignoredPaths`. Relay those paths when they appear. An uninitialized vendor submodule holds nothing to lose and never counts as dirty.
 
 The change launcher uses these commit titles:
 
@@ -110,7 +115,15 @@ chore(skills): 删除 <skill-name> skill
 chore(skills): 删除 <source-id> source 及其 Skills
 ```
 
-It skips branch, commit, and PR creation for an idempotent no-op. Otherwise it validates, stages only planned paths, pushes a feature branch, and opens a Draft PR.
+It skips the commit entirely for an idempotent no-op.
+
+## How a change reaches the repository
+
+The central repository holds the user’s own Skill configuration, so `main` is the only branch that ever represents it. Both launchers commit straight to `main`; they never create a branch or a pull request.
+
+Each publishing run applies the registry, lock, and vendor edits first, validates them, commits them on `main`, and only then reconciles the symlinks. A failure before the commit therefore leaves the machine’s links untouched and restores the central repository to a clean `main`. Validation is scoped to what changed: registry-only edits just prove the registry still resolves, while edits under `src`, `bin`, `tests`, `skills/manage-agent-skills`, or the build configuration run the full check and build.
+
+After committing, the launcher pushes `main` unless `--no-push` was passed. A rejected push is reported as a warning rather than a failure, because the commit and the links already agree locally; rerun the push after reconciling with `origin`.
 
 ## Safety
 

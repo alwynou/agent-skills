@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { resolveGitIdentity } from "../skills/manage-agent-skills/scripts/git-identity.mjs";
 import { changeCliArgs, changeMetadata, parseChangeArgs } from "../skills/manage-agent-skills/scripts/change-helpers.mjs";
 import { parseArgs, projectIdFromRemote, run } from "../skills/manage-agent-skills/scripts/install-helpers.mjs";
+import { touchesRuntime } from "../skills/manage-agent-skills/scripts/publish.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -29,43 +30,63 @@ describe("manage-agent-skills", () => {
     }
   });
 
-  it("uses the requested commit title and opens a Draft PR", async () => {
+  it("uses the requested commit title and never branches or opens a pull request", async () => {
     const script = await fs.readFile(path.resolve("skills/manage-agent-skills/scripts/install-skill.mjs"), "utf8");
-    expect(script).toContain('resolveGitIdentity(root)');
     expect(script).toContain('`feat(skills): 添加 ${values.get("--skill")} skill (${values.get("--source-url")})`');
-    expect(script).toContain('["pr", "create", "--draft", "--base", "main"');
+    expect(script).toContain('run("git", ["switch", "main"], root)');
+    expect(script).not.toContain('"switch", "-c"');
+    expect(script).not.toContain('"pr", "create"');
   });
 
   it("maps remove and delete requests to deterministic CLI and publication metadata", () => {
     const projectRemove = parseChangeArgs([
       "--action", "remove", "--skill", "review", "--scope", "project", "--project", "storefront",
     ]);
-    expect(changeCliArgs(projectRemove, true)).toEqual([
+    expect(changeCliArgs(projectRemove, { dryRun: true })).toEqual([
       "src/cli.ts", "remove", "review", "--scope", "project", "--project", "storefront", "--dry-run", "--no-sync", "--json",
     ]);
-    expect(changeMetadata(projectRemove)).toEqual({
-      branch: "skills/remove-review-project",
-      title: "chore(skills): 移除 review 的 project 安装",
-    });
+    expect(changeCliArgs(projectRemove, { sync: false })).toEqual([
+      "src/cli.ts", "remove", "review", "--scope", "project", "--project", "storefront", "--no-sync", "--json",
+    ]);
+    expect(changeMetadata(projectRemove)).toEqual({ title: "chore(skills): 移除 review 的 project 安装" });
 
     const sourceDelete = parseChangeArgs(["--action", "delete-source", "--source", "upstream"]);
-    expect(changeCliArgs(sourceDelete, false)).toEqual(["src/cli.ts", "delete", "--source", "upstream", "--json"]);
-    expect(changeMetadata(sourceDelete)).toEqual({
-      branch: "skills/delete-source-upstream",
-      title: "chore(skills): 删除 upstream source 及其 Skills",
-    });
+    expect(changeCliArgs(sourceDelete)).toEqual(["src/cli.ts", "delete", "--source", "upstream", "--json"]);
+    expect(changeMetadata(sourceDelete)).toEqual({ title: "chore(skills): 删除 upstream source 及其 Skills" });
     expect(() => parseChangeArgs(["--action", "remove", "--skill", "review", "--scope", "agent-global"]))
       .toThrow("--agent is required");
     expect(() => parseChangeArgs(["--action", "delete-source", "--source", "upstream", "--skill", "review"]))
       .toThrow("--skill is not allowed");
   });
 
-  it("publishes removals and deletions as Draft PRs with central Git identity", async () => {
+  it("commits removals and deletions straight onto main", async () => {
     const script = await fs.readFile(path.resolve("skills/manage-agent-skills/scripts/change-skill.mjs"), "utf8");
-    expect(script).toContain("resolveGitIdentity(root)");
-    expect(script).toContain('["add", "-A", "--", ...plan.trackedChanges]');
-    expect(script).toContain('["pr", "create", "--draft", "--base", "main"');
+    expect(script).toContain("commitOnMain(");
     expect(script).toContain("plan.noOp ? plan");
+    expect(script).not.toContain('"switch", "-c"');
+    expect(script).not.toContain('"pr", "create"');
+  });
+
+  it("commits before reconciling links and restores main when publication fails", async () => {
+    const script = await fs.readFile(path.resolve("skills/manage-agent-skills/scripts/publish.mjs"), "utf8");
+    expect(script).toContain("resolveGitIdentity(root)");
+    expect(script).toContain('"add", "-A", "--", target');
+    expect(script).toContain('details.includes("did not match any files")');
+    expect(script.indexOf("commit\", \"-m\", title")).toBeLessThan(script.indexOf("run(tsx, syncArgs"));
+    expect(script).toContain('"restore", "--source", revision, "--staged", "--worktree", "--", target');
+  });
+
+  it("scopes validation to the paths a change actually touches", () => {
+    expect(touchesRuntime(["registry/skills.yaml", ".skill-manager/lock.yaml", "vendors/upstream", ".gitmodules"])).toBe(false);
+    expect(touchesRuntime(["registry/skills.yaml", "src/core/manager.ts"])).toBe(true);
+    expect(touchesRuntime(["skills/manage-agent-skills/SKILL.md"])).toBe(true);
+    expect(touchesRuntime(["package-lock.json"])).toBe(true);
+  });
+
+  it("accepts --no-push as a flag in both launchers", () => {
+    const required = ["--skill", "foo", "--source-url", "https://example.com/foo", "--scope", "all-global"];
+    expect(parseArgs([...required, "--no-push"]).has("--no-push")).toBe(true);
+    expect(parseChangeArgs(["--action", "delete", "--skill", "review", "--no-push"]).has("--no-push")).toBe(true);
   });
 
   it("changes to the central repository before launching Node and preserves the working directory", async () => {
@@ -132,7 +153,10 @@ describe("manage-agent-skills", () => {
     expect(skill).toContain("Treat “remove”, “uninstall”, or equivalent wording as unlinking only");
     expect(skill).toContain("Deleting the only Skill from a third-party source removes the source too");
     expect(skill).toContain("change-skill.sh --action delete-source");
-    expect(skill).not.toContain("committed on a branch, pushed, and opened as a Draft PR");
+    expect(skill).toContain("Both launchers commit straight to `main`; they never create a branch or a pull request");
+    expect(skill).toContain("only then reconciles the symlinks");
+    expect(skill).toContain("Every form accepts `--no-push` to keep the commit local");
+    expect(skill).not.toContain("Draft PR");
     expect(openAiMetadata).toContain("allow_implicit_invocation: false");
   });
 });

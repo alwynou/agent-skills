@@ -133,7 +133,7 @@ export class SkillManager {
     if (!changed) {
       return {
         action: "remove", skills: [request.skillName], sourceId: null, target,
-        trackedChanges: [], links: [], retainedSource: true, noOp: true, applied: false, syncResult: null,
+        trackedChanges: [], links: [], retainedSource: true, ignoredPaths: [], noOp: true, applied: false, syncResult: null,
       };
     }
     if (skill.targets.length === 0) skill.enabled = false;
@@ -143,7 +143,7 @@ export class SkillManager {
       return {
         action: "remove", skills: [request.skillName], sourceId: null, target,
         trackedChanges: [path.relative(this.paths.root, this.paths.registry)], links,
-        retainedSource: true, noOp: false, applied: false, syncResult: null,
+        retainedSource: true, ignoredPaths: [], noOp: false, applied: false, syncResult: null,
       };
     }
     const syncResult = request.sync ? await this.reconcileRemoved(registry, [request.skillName]) : null;
@@ -151,13 +151,35 @@ export class SkillManager {
     return {
       action: "remove", skills: [request.skillName], sourceId: null, target,
       trackedChanges: [path.relative(this.paths.root, this.paths.registry)], links,
-      retainedSource: true, noOp: false, applied: true, syncResult,
+      retainedSource: true, ignoredPaths: [], noOp: false, applied: true, syncResult,
     };
   }
 
   private async trackedFiles(relativePath: string): Promise<string[]> {
     const output = await this.git.run(this.paths.root, ["ls-files", "--", relativePath]);
     return output ? output.split("\n") : [];
+  }
+
+  /**
+   * Splits `git status` porcelain output into tracked-or-untracked content and ignored
+   * content. Callers weigh the two differently: ignored content inside a local Skill may
+   * be the user's own data and always refuses, while ignored content inside a vendor is
+   * build output of a re-clonable upstream checkout and is removed with it.
+   */
+  private async worktreeState(cwd: string, pathspec?: string): Promise<{ blocking: string[]; ignored: string[] }> {
+    const args = ["status", "--porcelain", "--untracked-files=all", "--ignored=matching"];
+    if (pathspec) args.push("--", pathspec);
+    const output = await this.git.run(cwd, args);
+    const blocking: string[] = [];
+    const ignored: string[] = [];
+    for (const raw of output ? output.split("\n") : []) {
+      // The status code is one or two characters, and the surrounding runner trims the
+      // output, so a leading blank in codes such as " M" cannot be relied upon.
+      const line = raw.trim();
+      if (!line) continue;
+      (line.startsWith("!!") ? ignored : blocking).push(line.slice(line.indexOf(" ") + 1));
+    }
+    return { blocking, ignored };
   }
 
   private async preflightLocalSkillDelete(registry: RegistryConfig, skillName: string): Promise<{ relativePath: string; trackedFiles: string[] }> {
@@ -173,27 +195,38 @@ export class SkillManager {
     );
     if (shared) throw new UserError(`local skill path is also used by ${shared[0]}`);
     const relativePath = path.relative(this.paths.root, absolutePath);
-    const status = await this.git.run(this.paths.root, ["status", "--porcelain", "--untracked-files=all", "--ignored=matching", "--", relativePath]);
-    if (status) throw new UserError(`local skill ${skillName} has modified or untracked content`);
+    const state = await this.worktreeState(this.paths.root, relativePath);
+    if (state.blocking.length > 0) {
+      throw new UserError(`local skill ${skillName} has modified or untracked content: ${state.blocking.join(", ")}`);
+    }
+    if (state.ignored.length > 0) {
+      throw new UserError(`local skill ${skillName} has ignored content that deletion would destroy: ${state.ignored.join(", ")}`);
+    }
     const trackedFiles = await this.trackedFiles(relativePath);
     if (trackedFiles.length === 0) throw new UserError(`local skill ${skillName} has no tracked files`);
     await this.git.run(this.paths.root, ["rm", "--dry-run", "-r", "--", relativePath]);
     return { relativePath, trackedFiles };
   }
 
-  private async preflightSourceDelete(registry: RegistryConfig, sourceId: string): Promise<{ vendorPath: string }> {
+  private async preflightSourceDelete(registry: RegistryConfig, sourceId: string): Promise<{ vendorPath: string; ignoredPaths: string[] }> {
     const source = registry.sources[sourceId];
     if (!source) throw new UserError(`unknown source ${sourceId}`);
     const vendorPath = path.join("vendors", source.path ?? sourceId);
     const absolutePath = path.resolve(this.paths.root, vendorPath);
     if (!absolutePath.startsWith(`${path.resolve(this.paths.vendors)}${path.sep}`)) throw new UserError(`source ${sourceId} escapes vendors`);
     if (!(await pathExists(this.fs, absolutePath))) throw new UserError(`source ${sourceId} vendor is missing: ${absolutePath}`);
-    const status = await this.git.run(absolutePath, ["status", "--porcelain", "--untracked-files=all", "--ignored=matching"]);
-    if (status) throw new UserError(`source ${sourceId} vendor is dirty`);
     const stage = await this.git.run(this.paths.root, ["ls-files", "--stage", "--", vendorPath]);
     if (!stage.startsWith("160000 ")) throw new UserError(`source ${sourceId} is not a tracked submodule at ${vendorPath}`);
+    // An uninitialized submodule has no `.git`, and `git -C` inside it would silently
+    // resolve to the central repository and report *its* status instead. There is no
+    // local checkout to lose in that state, so only inspect an initialized one.
+    const initialized = await pathExists(this.fs, path.join(absolutePath, ".git"));
+    const state = initialized ? await this.worktreeState(absolutePath) : { blocking: [], ignored: [] };
+    if (state.blocking.length > 0) {
+      throw new UserError(`source ${sourceId} vendor has modified or untracked content: ${state.blocking.join(", ")}`);
+    }
     await this.git.run(this.paths.root, ["rm", "--dry-run", "--", vendorPath]);
-    return { vendorPath };
+    return { vendorPath, ignoredPaths: state.ignored };
   }
 
   async delete(request: DeleteSkillRequest): Promise<SkillRemovalPlan> {
@@ -207,7 +240,7 @@ export class SkillManager {
     let sourceId: string | null = request.sourceId ?? null;
     let retainedSource = false;
     let localDelete: { relativePath: string; trackedFiles: string[] } | null = null;
-    let sourceDelete: { vendorPath: string } | null = null;
+    let sourceDelete: { vendorPath: string; ignoredPaths: string[] } | null = null;
 
     if (request.sourceId) {
       if (request.sourceId === "local") throw new UserError("local is not a deletable source");
@@ -247,20 +280,22 @@ export class SkillManager {
       trackedChanges.add(sourceDelete.vendorPath);
     }
     const links = await this.managedLinkPaths(new Set(skillNames));
+    const ignoredPaths = sourceDelete?.ignoredPaths ?? [];
     if (request.dryRun) {
       return {
         action, skills: skillNames, sourceId, target: null, trackedChanges: [...trackedChanges], links,
-        retainedSource, noOp: false, applied: false, syncResult: null,
+        retainedSource, ignoredPaths, noOp: false, applied: false, syncResult: null,
       };
     }
     const syncResult = request.sync ? await this.reconcileRemoved(registry, skillNames) : null;
     if (localDelete) await this.git.run(this.paths.root, ["rm", "-r", "--", localDelete.relativePath]);
+    // `git rm` removes a submodule's whole working tree, ignored content included.
     if (sourceDelete) await this.git.run(this.paths.root, ["rm", "--", sourceDelete.vendorPath]);
     await this.store.writeRegistry(registry);
     if (sourceDelete) await this.store.writeLock(lock);
     return {
       action, skills: skillNames, sourceId, target: null, trackedChanges: [...trackedChanges], links,
-      retainedSource, noOp: false, applied: true, syncResult,
+      retainedSource, ignoredPaths, noOp: false, applied: true, syncResult,
     };
   }
 
